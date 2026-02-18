@@ -16,13 +16,27 @@ export async function GET() {
 export async function POST(request: NextRequest) {
   try {
     const body = await request.json();
+    const { action, id, ...rest } = body;
+
+    if (action === "run" && id) {
+      const result = await runOpenClawJSON([
+        "gateway",
+        "call",
+        "cron.run",
+        "--json",
+        "--params",
+        JSON.stringify({ id }),
+      ]);
+      return NextResponse.json(result);
+    }
+
     const result = await runOpenClawJSON([
       "gateway",
       "call",
       "cron.add",
       "--json",
       "--",
-      JSON.stringify(body),
+      JSON.stringify(rest),
     ]);
     return NextResponse.json(result);
   } catch (e) {
