@@ -267,9 +267,13 @@ export default function HomePage() {
 
   const handleClear = () => {
     abortRef.current?.abort();
+    abortRef.current = null;
     if (debounceRef.current) clearTimeout(debounceRef.current);
+    debounceRef.current = null;
     queueRef.current = [];
     batchPlaceholderRef.current = null;
+    runningRef.current = false;
+    setStreaming(false);
     setMessages([]);
     localStorage.removeItem("webclaw-chat");
   };
