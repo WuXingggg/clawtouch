@@ -42,7 +42,7 @@ export function SettingsPanel() {
             <div>
               <p className="text-sm font-medium">Gateway</p>
               <p className="text-[11px] text-text-secondary">
-                {gateway?.version || "未连接"}
+                {isOnline ? `已连接` : "未连接"}
               </p>
             </div>
           </div>

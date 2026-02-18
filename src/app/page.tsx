@@ -13,6 +13,7 @@ import {
   WifiOff,
   Trash2,
 } from "lucide-react";
+import ReactMarkdown from "react-markdown";
 import { BottomSheet } from "@/components/ui/BottomSheet";
 import { TokenPanel } from "@/components/panels/TokenPanel";
 import { SkillsPanel } from "@/components/panels/SkillsPanel";
@@ -71,6 +72,9 @@ export default function HomePage() {
     setInput("");
     setLoading(true);
 
+    // Show loading placeholder
+    setMessages((prev) => [...prev, { role: "assistant", content: "" }]);
+
     try {
       const res = await fetch("/api/chat", {
         method: "POST",
@@ -78,51 +82,29 @@ export default function HomePage() {
         body: JSON.stringify({ messages: newMessages }),
       });
 
-      if (!res.ok) throw new Error(`Error: ${res.status}`);
+      const data = await res.json();
 
-      const reader = res.body?.getReader();
-      if (!reader) throw new Error("No reader");
-
-      const decoder = new TextDecoder();
-      let assistantContent = "";
-      setMessages((prev) => [...prev, { role: "assistant", content: "" }]);
-
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-
-        const chunk = decoder.decode(value, { stream: true });
-        const lines = chunk.split("\n");
-
-        for (const line of lines) {
-          if (!line.startsWith("data: ")) continue;
-          const data = line.slice(6);
-          if (data === "[DONE]") break;
-
-          try {
-            const parsed = JSON.parse(data);
-            const delta = parsed.choices?.[0]?.delta?.content;
-            if (delta) {
-              assistantContent += delta;
-              setMessages((prev) => {
-                const updated = [...prev];
-                updated[updated.length - 1] = {
-                  role: "assistant",
-                  content: assistantContent,
-                };
-                return updated;
-              });
-            }
-          } catch {
-            // skip
-          }
-        }
+      if (!res.ok) {
+        throw new Error(data.error || `Error: ${res.status}`);
       }
+
+      setMessages((prev) => {
+        const updated = [...prev];
+        updated[updated.length - 1] = {
+          role: "assistant",
+          content: data.content || "(empty)",
+        };
+        return updated;
+      });
     } catch (err) {
-      setMessages((prev) => [
-        ...prev,
-        { role: "assistant", content: `连接失败: ${(err as Error).message}` },
-      ]);
+      setMessages((prev) => {
+        const updated = [...prev];
+        updated[updated.length - 1] = {
+          role: "assistant",
+          content: `连接失败: ${(err as Error).message}`,
+        };
+        return updated;
+      });
     } finally {
       setLoading(false);
     }
@@ -190,18 +172,23 @@ export default function HomePage() {
             className={`flex ${msg.role === "user" ? "justify-end" : "justify-start"}`}
           >
             <div
-              className={`max-w-[85%] px-3.5 py-2.5 rounded-2xl text-sm leading-relaxed whitespace-pre-wrap ${
+              className={`max-w-[85%] px-3.5 py-2.5 rounded-2xl text-sm leading-relaxed ${
                 msg.role === "user"
-                  ? "bg-primary text-white rounded-br-md"
-                  : "bg-card text-text shadow-sm rounded-bl-md"
+                  ? "bg-primary text-white rounded-br-md whitespace-pre-wrap"
+                  : "bg-card text-text shadow-sm rounded-bl-md chat-md"
               }`}
             >
-              {msg.content ||
-                (loading && i === messages.length - 1 ? (
-                  <Loader2 size={14} className="animate-spin text-text-secondary" />
+              {msg.content ? (
+                msg.role === "assistant" ? (
+                  <ReactMarkdown>{msg.content}</ReactMarkdown>
                 ) : (
-                  ""
-                ))}
+                  msg.content
+                )
+              ) : loading && i === messages.length - 1 ? (
+                <Loader2 size={14} className="animate-spin text-text-secondary" />
+              ) : (
+                ""
+              )}
             </div>
           </div>
         ))}

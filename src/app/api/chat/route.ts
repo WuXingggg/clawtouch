@@ -1,4 +1,4 @@
-import { NextRequest } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
 import { connectToGateway } from "@/lib/gateway-ws";
 import { randomUUID } from "crypto";
 
@@ -11,100 +11,63 @@ export async function POST(request: NextRequest) {
     .reverse()
     .find((m: { role: string }) => m.role === "user");
   if (!lastUserMsg) {
-    return new Response(JSON.stringify({ error: "No user message" }), {
-      status: 400,
-      headers: { "Content-Type": "application/json" },
-    });
+    return NextResponse.json({ error: "No user message" }, { status: 400 });
   }
 
-  const idempotencyKey = randomUUID();
+  try {
+    const gw = await connectToGateway();
+    const idempotencyKey = randomUUID();
 
-  const stream = new ReadableStream({
-    async start(controller) {
-      const encoder = new TextEncoder();
-      let done = false;
-      let lastText = "";
+    // Wait for the final response
+    const result = await new Promise<string>((resolve, reject) => {
+      let latestText = "";
+      const timeout = setTimeout(() => {
+        gw.close();
+        reject(new Error("Timeout: 120s"));
+      }, 120000);
 
-      const cleanup = () => {
-        if (!done) {
-          done = true;
-          try {
-            controller.enqueue(encoder.encode("data: [DONE]\n\n"));
-            controller.close();
-          } catch {
-            // already closed
-          }
+      gw.onEvent((event, payload) => {
+        if (event !== "chat") return;
+        const p = payload as Record<string, unknown>;
+        if (!p) return;
+
+        if (p.state === "delta" && p.message) {
+          const text = extractText(p.message);
+          if (text) latestText = text;
+        } else if (p.state === "final") {
+          clearTimeout(timeout);
+          gw.close();
+          // final event may contain full message, or use accumulated delta
+          const finalText = p.message ? extractText(p.message) : null;
+          resolve(finalText || latestText || "(empty response)");
+        } else if (p.state === "aborted") {
+          clearTimeout(timeout);
+          gw.close();
+          resolve(latestText || "(aborted)");
+        } else if (p.state === "error") {
+          clearTimeout(timeout);
+          gw.close();
+          reject(new Error((p.errorMessage as string) || "Chat error"));
         }
-      };
+      });
 
-      try {
-        const gw = await connectToGateway();
+      gw.request("chat.send", {
+        sessionKey: SESSION_KEY,
+        message: lastUserMsg.content,
+        deliver: false,
+        idempotencyKey,
+      }).catch((err) => {
+        clearTimeout(timeout);
+        gw.close();
+        reject(err);
+      });
+    });
 
-        // Listen for chat stream events
-        gw.onEvent((event, payload) => {
-          if (done) return;
-          if (event !== "chat") return;
-
-          const p = payload as Record<string, unknown>;
-          if (!p) return;
-
-          if (p.state === "delta" && p.message) {
-            const fullText = extractText(p.message);
-            if (fullText && fullText.length > lastText.length) {
-              const newContent = fullText.slice(lastText.length);
-              lastText = fullText;
-              const sseData = JSON.stringify({
-                choices: [{ delta: { content: newContent } }],
-              });
-              controller.enqueue(encoder.encode(`data: ${sseData}\n\n`));
-            }
-          } else if (p.state === "final" || p.state === "aborted") {
-            gw.close();
-            cleanup();
-          } else if (p.state === "error") {
-            const errMsg = (p.errorMessage as string) || "Chat error";
-            const sseData = JSON.stringify({
-              choices: [{ delta: { content: `\n\nError: ${errMsg}` } }],
-            });
-            controller.enqueue(encoder.encode(`data: ${sseData}\n\n`));
-            gw.close();
-            cleanup();
-          }
-        });
-
-        // Send the chat message
-        await gw.request("chat.send", {
-          sessionKey: SESSION_KEY,
-          message: lastUserMsg.content,
-          deliver: false,
-          idempotencyKey,
-        });
-
-        // Timeout after 120s
-        setTimeout(() => {
-          if (!done) {
-            gw.close();
-            cleanup();
-          }
-        }, 120000);
-      } catch (err) {
-        const errMsg = err instanceof Error ? err.message : String(err);
-        const sseData = JSON.stringify({
-          choices: [{ delta: { content: `连接失败: ${errMsg}` } }],
-        });
-        controller.enqueue(encoder.encode(`data: ${sseData}\n\n`));
-        cleanup();
-      }
-    },
-  });
-
-  return new Response(stream, {
-    headers: {
-      "Content-Type": "text/event-stream",
-      "Cache-Control": "no-cache",
-      Connection: "keep-alive",
-    },
-  });
+    return NextResponse.json({ content: result });
+  } catch (err) {
+    const errMsg = err instanceof Error ? err.message : String(err);
+    return NextResponse.json({ error: errMsg }, { status: 502 });
+  }
 }
 
 function extractText(message: unknown): string | null {

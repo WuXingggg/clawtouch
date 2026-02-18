@@ -1,4 +1,5 @@
 @import "tailwindcss";
+@plugin "@tailwindcss/typography";
 
 @theme {
   --color-primary: #10b981;
@@ -38,6 +39,51 @@ body {
   -ms-overflow-style: none;
   scrollbar-width: none;
 }
+
+/* Compact prose for chat bubbles */
+.chat-md {
+  --tw-prose-body: var(--color-text);
+  --tw-prose-headings: var(--color-text);
+  --tw-prose-bold: var(--color-text);
+  --tw-prose-links: var(--color-accent);
+  line-height: 1.5;
+}
+.chat-md > :first-child { margin-top: 0; }
+.chat-md > :last-child { margin-bottom: 0; }
+.chat-md p { margin: 0.15em 0; }
+.chat-md h1, .chat-md h2, .chat-md h3, .chat-md h4 {
+  margin: 0.3em 0 0.1em;
+  font-size: 0.875rem;
+  font-weight: 600;
+}
+.chat-md ul {
+  margin: 0.1em 0;
+  padding-left: 1.1em;
+  list-style-type: disc;
+}
+.chat-md ol {
+  margin: 0.1em 0;
+  padding-left: 1.1em;
+  list-style-type: decimal;
+}
+.chat-md li { margin: 0; }
+.chat-md li p { margin: 0; display: inline; }
+.chat-md table { font-size: 0.75rem; margin: 0.2em 0; }
+.chat-md code {
+  font-size: 0.78rem;
+  background: var(--color-surface);
+  padding: 0.1em 0.25em;
+  border-radius: 3px;
+}
+.chat-md pre {
+  margin: 0.2em 0;
+  padding: 0.5em;
+  border-radius: 6px;
+  font-size: 0.78rem;
+  overflow-x: auto;
+}
+.chat-md hr { margin: 0.3em 0; }
+.chat-md blockquote { margin: 0.2em 0; padding-left: 0.6em; }
 
 /* Bottom sheet slide up */
 @keyframes slide-up {
