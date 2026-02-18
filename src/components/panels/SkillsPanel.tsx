@@ -9,6 +9,13 @@ import { ChevronDown, Star, Download, Search } from "lucide-react";
 
 const fetcher = (url: string) => fetch(url).then((r) => r.json());
 
+interface SkillMissing {
+  bins: string[];
+  env: string[];
+  config: string[];
+  os: string[];
+}
+
 interface Skill {
   name: string;
   description: string;
@@ -16,6 +23,7 @@ interface Skill {
   eligible: boolean;
   disabled: boolean;
   userInvocable: boolean;
+  missing: SkillMissing;
 }
 
 // ── 本地技能中文翻译 ──
@@ -201,6 +209,8 @@ export function SkillsPanel() {
   const { data: skills, mutate } = useSWR<Skill[]>("/api/skills", fetcher);
   const [search, setSearch] = useState("");
   const [toggling, setToggling] = useState<string | null>(null);
+  const [installing, setInstalling] = useState<string | null>(null);
+  const [installError, setInstallError] = useState<string | null>(null);
   const loading = skills === undefined;
 
   const allSkills = skills || [];
@@ -238,6 +248,27 @@ export function SkillsPanel() {
     });
     await mutate();
     setToggling(null);
+  };
+
+  const handleInstall = async (slug: string) => {
+    setInstalling(slug);
+    setInstallError(null);
+    try {
+      const res = await fetch("/api/skills", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ slug }),
+      });
+      if (!res.ok) {
+        const data = await res.json();
+        setInstallError(data.error || "安装失败");
+      } else {
+        await mutate();
+      }
+    } catch {
+      setInstallError("网络错误");
+    }
+    setInstalling(null);
   };
 
   if (loading) {
@@ -294,27 +325,58 @@ export function SkillsPanel() {
         title="未启用"
         badge={<Badge variant="default">{filteredDisabled.length}</Badge>}
       >
-        {filteredDisabled.map((skill) => (
-          <Card key={skill.name} className="!p-3">
-            <div className="flex items-center justify-between gap-2">
-              <div className="flex-1 min-w-0">
-                <span className="text-sm font-medium">{skill.name}</span>
-                <p className="text-[11px] text-text-secondary truncate mt-0.5">
-                  {zhDesc(skill.name, skill.description)}
-                </p>
+        {filteredDisabled.map((skill) => {
+          const m = skill.missing;
+          const hasOsBlock = m.os.length > 0;
+          const missingBins = m.bins;
+          const missingEnv = m.env;
+          const missingConfig = m.config;
+          return (
+            <Card key={skill.name} className="!p-3">
+              <div className="flex items-center justify-between gap-2">
+                <div className="flex-1 min-w-0">
+                  <span className="text-sm font-medium">{skill.name}</span>
+                  <p className="text-[11px] text-text-secondary truncate mt-0.5">
+                    {zhDesc(skill.name, skill.description)}
+                  </p>
+                  {!skill.eligible && (
+                    <div className="flex flex-wrap gap-1 mt-1">
+                      {hasOsBlock && (
+                        <span className="text-[10px] px-1.5 py-0.5 rounded bg-red-100 text-red-600">
+                          需 {m.os.join("/")}
+                        </span>
+                      )}
+                      {missingBins.length > 0 && (
+                        <span className="text-[10px] px-1.5 py-0.5 rounded bg-amber-100 text-amber-700">
+                          缺 {missingBins.join(", ")}
+                        </span>
+                      )}
+                      {missingEnv.length > 0 && (
+                        <span className="text-[10px] px-1.5 py-0.5 rounded bg-blue-100 text-blue-600">
+                          需配置 {missingEnv.join(", ")}
+                        </span>
+                      )}
+                      {missingConfig.length > 0 && (
+                        <span className="text-[10px] px-1.5 py-0.5 rounded bg-purple-100 text-purple-600">
+                          缺配置 {missingConfig.join(", ")}
+                        </span>
+                      )}
+                    </div>
+                  )}
+                </div>
+                {skill.eligible ? (
+                  <Toggle
+                    checked={false}
+                    onChange={() => handleToggle(skill.name, true)}
+                    disabled={toggling === skill.name}
+                  />
+                ) : (
+                  <Badge variant="default">缺依赖</Badge>
+                )}
               </div>
-              {skill.eligible ? (
-                <Toggle
-                  checked={false}
-                  onChange={() => handleToggle(skill.name, true)}
-                  disabled={toggling === skill.name}
-                />
-              ) : (
-                <Badge variant="default">缺依赖</Badge>
-              )}
-            </div>
-          </Card>
-        ))}
+            </Card>
+          );
+        })}
         {filteredDisabled.length === 0 && (
           <p className="text-xs text-text-secondary text-center py-2">无匹配</p>
         )}
@@ -325,24 +387,41 @@ export function SkillsPanel() {
         title="ClawHub 市场"
         badge={<Badge variant="warning">{filteredHub.length}</Badge>}
       >
+        {installError && (
+          <div className="text-xs text-red-500 bg-red-50 rounded-lg px-3 py-2 mb-2">
+            {installError}
+          </div>
+        )}
         {filteredHub.map((h) => (
           <Card key={h.slug} className="!p-3">
-            <div className="flex-1 min-w-0">
-              <div className="flex items-center justify-between">
-                <span className="text-sm font-medium">{h.name}</span>
-                <div className="flex items-center gap-2 text-[11px] text-text-secondary shrink-0">
-                  <span className="flex items-center gap-0.5">
-                    <Star size={10} className="text-amber-400" fill="currentColor" />
-                    {h.stars}
-                  </span>
-                  <span className="flex items-center gap-0.5">
-                    <Download size={10} />
-                    {h.installs}
-                  </span>
+            <div className="flex items-start justify-between gap-2">
+              <div className="flex-1 min-w-0">
+                <div className="flex items-center gap-2">
+                  <span className="text-sm font-medium">{h.name}</span>
+                  <div className="flex items-center gap-2 text-[11px] text-text-secondary">
+                    <span className="flex items-center gap-0.5">
+                      <Star size={10} className="text-amber-400" fill="currentColor" />
+                      {h.stars}
+                    </span>
+                    <span className="flex items-center gap-0.5">
+                      <Download size={10} />
+                      {h.installs}
+                    </span>
+                  </div>
                 </div>
+                <p className="text-[11px] text-text-secondary mt-0.5">{h.desc}</p>
               </div>
-              <p className="text-[11px] text-text-secondary mt-0.5">{h.desc}</p>
-              <p className="text-[10px] text-text-secondary/60 mt-0.5">clawhub install {h.slug}</p>
+              <button
+                onClick={() => handleInstall(h.slug)}
+                disabled={installing !== null}
+                className={`shrink-0 px-3 py-1 text-xs font-medium rounded-md transition-colors ${
+                  installing === h.slug
+                    ? "bg-primary/20 text-primary animate-pulse"
+                    : "bg-primary text-white active:bg-primary/80"
+                } disabled:opacity-50`}
+              >
+                {installing === h.slug ? "安装中..." : "安装"}
+              </button>
             </div>
           </Card>
         ))}

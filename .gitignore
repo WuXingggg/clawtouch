@@ -6,3 +6,5 @@ out/
 *.tsbuildinfo
 next-env.d.ts
 public/uploads/
+.clawhub/
+/skills/
