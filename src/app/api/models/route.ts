@@ -7,15 +7,27 @@ export async function GET() {
   const configPath = getConfigPath();
   const exists = existsSync(configPath);
 
-  // Extract providers from config
-  const providers =
-    (config.providers as Record<string, unknown>) || {};
+  // Providers are under models.providers in openclaw.json
+  const modelsConfig = (config.models as Record<string, unknown>) || {};
+  const rawProviders =
+    (modelsConfig.providers as Record<string, Record<string, unknown>>) || {};
+
+  // Mask API keys before sending to frontend
+  const providers: Record<string, Record<string, unknown>> = {};
+  for (const [name, provConfig] of Object.entries(rawProviders)) {
+    providers[name] = { ...provConfig };
+    if (providers[name].apiKey) {
+      const key = String(providers[name].apiKey);
+      providers[name].apiKey = key.slice(0, 8) + "..." + key.slice(-4);
+      providers[name]._hasKey = true;
+    }
+  }
 
   return NextResponse.json({
     configStatus: {
       loaded: exists,
       valid: exists && Object.keys(config).length > 0,
-      mode: config.mode || "merge",
+      mode: (config.gateway as Record<string, unknown>)?.mode || "local",
       path: configPath,
     },
     providers,

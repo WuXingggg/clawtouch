@@ -1,6 +1,5 @@
 import type { Metadata, Viewport } from "next";
 import "./globals.css";
-import { BottomNav } from "@/components/layout/BottomNav";
 
 export const metadata: Metadata = {
   title: "WebClaw",
@@ -32,10 +31,7 @@ export default function RootLayout({
         <meta name="apple-mobile-web-app-capable" content="yes" />
         <link rel="apple-touch-icon" href="/icons/icon-192.png" />
       </head>
-      <body className="antialiased">
-        <main className="min-h-screen pb-20">{children}</main>
-        <BottomNav />
-      </body>
+      <body className="antialiased">{children}</body>
     </html>
   );
 }

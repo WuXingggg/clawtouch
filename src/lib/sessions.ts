@@ -2,8 +2,9 @@ import { readdir, readFile } from "fs/promises";
 import { homedir } from "os";
 import { join } from "path";
 
-const SESSIONS_DIR =
-  process.env.OPENCLAW_SESSIONS || join(homedir(), ".openclaw", "sessions");
+// Real path: ~/.openclaw/agents/<agentId>/sessions/
+const AGENTS_DIR =
+  process.env.OPENCLAW_AGENTS || join(homedir(), ".openclaw", "agents");
 
 interface TokenEntry {
   date: string;
@@ -36,59 +37,69 @@ export async function getTokenStats(days: number = 30): Promise<TokenStats> {
   let totalCacheWrite = 0;
 
   try {
-    const files = await readdir(SESSIONS_DIR);
-    const jsonlFiles = files.filter((f) => f.endsWith(".jsonl"));
+    // Scan all agent directories
+    const agentDirs = await readdir(AGENTS_DIR, { withFileTypes: true });
 
-    for (const file of jsonlFiles) {
-      const content = await readFile(join(SESSIONS_DIR, file), "utf-8");
-      const lines = content.split("\n").filter(Boolean);
+    for (const agentDir of agentDirs) {
+      if (!agentDir.isDirectory()) continue;
+      const sessionsDir = join(AGENTS_DIR, agentDir.name, "sessions");
 
-      for (const line of lines) {
-        try {
-          const event = JSON.parse(line);
-          if (!event.timestamp) continue;
+      let files: string[];
+      try {
+        files = (await readdir(sessionsDir)).filter((f) => f.endsWith(".jsonl"));
+      } catch {
+        continue;
+      }
 
-          const eventDate = new Date(event.timestamp);
-          if (eventDate < cutoff) continue;
+      for (const file of files) {
+        const content = await readFile(join(sessionsDir, file), "utf-8");
+        const lines = content.split("\n").filter(Boolean);
 
-          const dateKey = eventDate.toISOString().slice(0, 10);
-          const input = event.inputTokens || event.usage?.input_tokens || 0;
-          const output = event.outputTokens || event.usage?.output_tokens || 0;
-          const cacheRead =
-            event.cacheReadTokens ||
-            event.usage?.cache_read_input_tokens ||
-            0;
-          const cacheWrite =
-            event.cacheWriteTokens ||
-            event.usage?.cache_creation_input_tokens ||
-            0;
+        for (const line of lines) {
+          try {
+            const event = JSON.parse(line);
+            if (!event.timestamp) continue;
 
-          if (input === 0 && output === 0) continue;
+            const eventDate = new Date(event.timestamp);
+            if (eventDate < cutoff) continue;
 
-          totalInput += input;
-          totalOutput += output;
-          totalCacheRead += cacheRead;
-          totalCacheWrite += cacheWrite;
+            // Usage is nested in message.usage for openclaw
+            const usage = event.message?.usage;
+            if (!usage) continue;
 
-          const existing = dailyMap.get(dateKey) || {
-            date: dateKey,
-            inputTokens: 0,
-            outputTokens: 0,
-            cacheReadTokens: 0,
-            cacheWriteTokens: 0,
-          };
-          existing.inputTokens += input;
-          existing.outputTokens += output;
-          existing.cacheReadTokens += cacheRead;
-          existing.cacheWriteTokens += cacheWrite;
-          dailyMap.set(dateKey, existing);
-        } catch {
-          // skip malformed lines
+            const input = usage.input || 0;
+            const output = usage.output || 0;
+            const cacheRead = usage.cacheRead || 0;
+            const cacheWrite = usage.cacheWrite || 0;
+
+            if (input === 0 && output === 0) continue;
+
+            const dateKey = eventDate.toISOString().slice(0, 10);
+            totalInput += input;
+            totalOutput += output;
+            totalCacheRead += cacheRead;
+            totalCacheWrite += cacheWrite;
+
+            const existing = dailyMap.get(dateKey) || {
+              date: dateKey,
+              inputTokens: 0,
+              outputTokens: 0,
+              cacheReadTokens: 0,
+              cacheWriteTokens: 0,
+            };
+            existing.inputTokens += input;
+            existing.outputTokens += output;
+            existing.cacheReadTokens += cacheRead;
+            existing.cacheWriteTokens += cacheWrite;
+            dailyMap.set(dateKey, existing);
+          } catch {
+            // skip malformed lines
+          }
         }
       }
     }
   } catch {
-    // sessions dir may not exist
+    // agents dir may not exist
   }
 
   const todayKey = new Date().toISOString().slice(0, 10);

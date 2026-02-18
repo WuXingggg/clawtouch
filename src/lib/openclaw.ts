@@ -24,14 +24,25 @@ export function runOpenClaw(
 
 export async function runOpenClawJSON<T = unknown>(args: string[]): Promise<T> {
   const { stdout } = await runOpenClaw(args);
-  return JSON.parse(stdout);
+  // openclaw CLI may print warnings before JSON, find the first { or [
+  const jsonStart = stdout.search(/[\[{]/);
+  if (jsonStart === -1) throw new Error("No JSON in output");
+  return JSON.parse(stdout.slice(jsonStart));
 }
 
-export async function gatewayHealth(): Promise<{
+interface GatewayHealthResult {
   online: boolean;
   version?: string;
   uptime?: number;
-}> {
+  agents?: Array<{
+    agentId: string;
+    isDefault: boolean;
+  }>;
+  channels?: Record<string, { configured: boolean; running: boolean }>;
+  defaultAgentId?: string;
+}
+
+export async function gatewayHealth(): Promise<GatewayHealthResult> {
   try {
     const result = await runOpenClawJSON<Record<string, unknown>>([
       "gateway",
@@ -39,9 +50,12 @@ export async function gatewayHealth(): Promise<{
       "--json",
     ]);
     return {
-      online: true,
+      online: result.ok === true,
       version: result.version as string,
-      uptime: result.uptime as number,
+      uptime: result.durationMs as number,
+      agents: result.agents as GatewayHealthResult["agents"],
+      channels: result.channels as GatewayHealthResult["channels"],
+      defaultAgentId: result.defaultAgentId as string,
     };
   } catch {
     return { online: false };

@@ -4,8 +4,9 @@ import { join } from "path";
 import { readConfig, writeConfig } from "./config";
 
 const SKILLS_DIRS = [
+  "/usr/lib/node_modules/openclaw/skills",
   join(homedir(), ".openclaw", "skills"),
-  // Bundled skills path varies by install method
+  join(homedir(), ".openclaw", "workspace", "skills"),
 ];
 
 export interface Skill {

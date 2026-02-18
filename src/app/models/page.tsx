@@ -9,10 +9,15 @@ import { Pencil, Key, Check } from "lucide-react";
 
 const fetcher = (url: string) => fetch(url).then((r) => r.json());
 
+interface ModelEntry {
+  id?: string;
+  name?: string;
+}
+
 interface ProviderConfig {
   apiKey?: string;
   baseUrl?: string;
-  models?: string[];
+  models?: (string | ModelEntry)[];
   [key: string]: unknown;
 }
 
@@ -82,7 +87,7 @@ export default function ModelsPage() {
         ) : (
           <div className="space-y-3">
             {providerEntries.map(([name, config]) => {
-              const hasKey = !!config.apiKey;
+              const hasKey = !!config._hasKey || !!config.apiKey;
               const models = config.models || [];
               const baseUrl = config.baseUrl || getDefaultUrl(name);
 
@@ -113,11 +118,14 @@ export default function ModelsPage() {
                         🤖 {models.length} 个模型
                       </p>
                       <ul className="text-xs text-text-secondary space-y-0.5 ml-3">
-                        {models.slice(0, 3).map((m) => (
-                          <li key={m} className="list-disc">
-                            {m}
-                          </li>
-                        ))}
+                        {models.slice(0, 3).map((m, idx) => {
+                          const label = typeof m === "string" ? m : m.name || m.id || "unknown";
+                          return (
+                            <li key={idx} className="list-disc">
+                              {label}
+                            </li>
+                          );
+                        })}
                         {models.length > 3 && (
                           <li className="text-text-secondary">
                             还有 {models.length - 3} 个模型...
@@ -140,6 +148,7 @@ function getDefaultUrl(provider: string): string {
   const urls: Record<string, string> = {
     anthropic: "https://api.anthropic.com/v1",
     openai: "https://api.openai.com/v1",
+    openrouter: "https://openrouter.ai/api/v1",
     deepseek: "https://api.deepseek.com",
     google: "https://generativelanguage.googleapis.com",
   };
