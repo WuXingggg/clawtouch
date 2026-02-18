@@ -1,6 +1,5 @@
 "use client";
 
-import { useState } from "react";
 import useSWR from "swr";
 import { Card } from "@/components/ui/Card";
 import { Badge } from "@/components/ui/Badge";
@@ -18,21 +17,18 @@ interface CronJob {
   payload?: { kind: string; message?: string };
 }
 
-export function CronPanel() {
-  const { data, mutate } = useSWR("/api/cron", fetcher);
-  const [running, setRunning] = useState<string | null>(null);
+interface CronPanelProps {
+  onSendMessage?: (text: string) => void;
+}
+
+export function CronPanel({ onSendMessage }: CronPanelProps) {
+  const { data } = useSWR("/api/cron", fetcher);
 
   const jobs: CronJob[] = Array.isArray(data) ? data : data?.jobs || [];
 
-  const handleRun = async (id: string) => {
-    setRunning(id);
-    await fetch("/api/cron", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ action: "run", id }),
-    });
-    await mutate();
-    setRunning(null);
+  const handleRun = (job: CronJob) => {
+    const text = job.payload?.message || `执行定时任务: ${job.name}`;
+    onSendMessage?.(text);
   };
 
   return (
@@ -68,12 +64,11 @@ export function CronPanel() {
               )}
               <div className="flex justify-end">
                 <button
-                  onClick={() => handleRun(job.id)}
-                  disabled={running === job.id}
+                  onClick={() => handleRun(job)}
                   className="flex items-center gap-1 px-3 py-1 rounded-full bg-primary/10 text-primary text-xs font-medium"
                 >
                   <Play size={10} />
-                  {running === job.id ? "..." : "执行"}
+                  执行
                 </button>
               </div>
             </Card>

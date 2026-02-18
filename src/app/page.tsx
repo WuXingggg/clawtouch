@@ -261,6 +261,20 @@ export default function HomePage() {
     setTimeout(() => processBatch(), 50);
   }, [input, enqueueMessage, processBatch]);
 
+  // Send a message programmatically (used by panels)
+  const sendMessage = useCallback(
+    (text: string) => {
+      if (!text.trim()) return;
+      enqueueMessage(text.trim());
+      if (debounceRef.current) {
+        clearTimeout(debounceRef.current);
+        debounceRef.current = null;
+      }
+      setTimeout(() => processBatch(), 50);
+    },
+    [enqueueMessage, processBatch]
+  );
+
   const handleStop = useCallback(() => {
     abortRef.current?.abort();
   }, []);
@@ -433,7 +447,14 @@ export default function HomePage() {
       >
         {activePanel === "tokens" && <TokenPanel />}
         {activePanel === "skills" && <SkillsPanel />}
-        {activePanel === "cron" && <CronPanel />}
+        {activePanel === "cron" && (
+          <CronPanel
+            onSendMessage={(text) => {
+              setActivePanel(null);
+              sendMessage(text);
+            }}
+          />
+        )}
         {activePanel === "settings" && <SettingsPanel />}
       </BottomSheet>
     </div>
