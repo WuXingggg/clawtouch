@@ -50,12 +50,35 @@ function nextMsgId() {
  * - Messages within DEBOUNCE_MS are merged into one batch
  * - Only one API call runs at a time; next batch waits for current to finish
  */
+// Read cached gateway status for instant render, update on each fetch
+const GW_CACHE_KEY = "webclaw-gw-status";
+function gwFetcher(url: string) {
+  return fetch(url)
+    .then((r) => r.json())
+    .then((data) => {
+      try {
+        sessionStorage.setItem(GW_CACHE_KEY, JSON.stringify(data));
+      } catch { /* ignore */ }
+      return data;
+    });
+}
+function getGwFallback() {
+  if (typeof window === "undefined") return undefined;
+  try {
+    const cached = sessionStorage.getItem(GW_CACHE_KEY);
+    return cached ? JSON.parse(cached) : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 export default function HomePage() {
-  const { data: gateway } = useSWR("/api/gateway", fetcher, {
+  const { data: gateway } = useSWR("/api/gateway", gwFetcher, {
     refreshInterval: 10000,
     dedupingInterval: 5000,
     errorRetryCount: 3,
     errorRetryInterval: 3000,
+    fallbackData: getGwFallback(),
   });
   const isOnline = gateway?.online;
   const gatewayLoading = gateway === undefined;
