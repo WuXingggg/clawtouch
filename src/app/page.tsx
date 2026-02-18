@@ -21,6 +21,7 @@ import {
   X,
 } from "lucide-react";
 import ReactMarkdown from "react-markdown";
+import remarkGfm from "remark-gfm";
 import { BottomSheet } from "@/components/ui/BottomSheet";
 import { TokenPanel } from "@/components/panels/TokenPanel";
 import { SkillsPanel } from "@/components/panels/SkillsPanel";
@@ -533,7 +534,7 @@ export default function HomePage() {
             >
               {msg.content ? (
                 msg.role === "assistant" ? (
-                  <ReactMarkdown>{msg.content}</ReactMarkdown>
+                  <ReactMarkdown remarkPlugins={[remarkGfm]}>{msg.content}</ReactMarkdown>
                 ) : (
                   msg.content
                 )
