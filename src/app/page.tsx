@@ -409,6 +409,7 @@ export default function HomePage() {
             }}
             placeholder="输入消息..."
             rows={1}
+            autoComplete="off"
             className="flex-1 resize-none rounded-xl bg-surface border border-border px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-primary/30 max-h-32"
           />
           <button
