@@ -5,12 +5,24 @@ import { randomUUID } from "crypto";
 const SESSION_KEY = process.env.OPENCLAW_SESSION_KEY || "agent:main:main";
 
 export async function POST(request: NextRequest) {
-  const { messages } = await request.json();
+  let body: { messages?: unknown[] };
+  try {
+    body = await request.json();
+  } catch {
+    return NextResponse.json({ error: "Invalid request body" }, { status: 400 });
+  }
+
+  const messages = body.messages;
+  if (!Array.isArray(messages)) {
+    return NextResponse.json({ error: "Missing messages array" }, { status: 400 });
+  }
 
   const lastUserMsg = [...messages]
     .reverse()
-    .find((m: { role: string }) => m.role === "user");
-  if (!lastUserMsg) {
+    .find((m: unknown) => (m as Record<string, unknown>)?.role === "user") as
+    | { role: string; content: string }
+    | undefined;
+  if (!lastUserMsg?.content) {
     return NextResponse.json({ error: "No user message" }, { status: 400 });
   }
 
@@ -43,26 +55,10 @@ export async function POST(request: NextRequest) {
         finish(latestText || "(timeout)");
       }, 120000);
 
-      gw.onEvent((event, payload) => {
-        if (event !== "chat") return;
-        const p = payload as Record<string, unknown>;
-        if (!p) return;
+      // Buffer events received before we know our runId
+      const earlyEvents: Array<Record<string, unknown>> = [];
 
-        const eventRunId = p.runId as string | undefined;
-
-        // Ignore events from different runs (stale events from prior chats)
-        if (myRunId && eventRunId && eventRunId !== myRunId) return;
-
-        // Ignore stale final/aborted with no message before we know our runId
-        if (!myRunId && (p.state === "final" || p.state === "aborted") && !p.message) {
-          return;
-        }
-
-        // Capture runId from first meaningful event
-        if (!myRunId && eventRunId) {
-          myRunId = eventRunId;
-        }
-
+      const processEvent = (p: Record<string, unknown>) => {
         if (p.state === "delta" && p.message) {
           const text = extractText(p.message);
           if (text) latestText = text;
@@ -74,6 +70,25 @@ export async function POST(request: NextRequest) {
         } else if (p.state === "error") {
           fail(new Error((p.errorMessage as string) || "Chat error"));
         }
+      };
+
+      gw.onEvent((event, payload) => {
+        if (event !== "chat") return;
+        const p = payload as Record<string, unknown>;
+        if (!p) return;
+
+        const eventRunId = p.runId as string | undefined;
+
+        if (!myRunId) {
+          // Don't know our runId yet — buffer events (skip stale finals)
+          if ((p.state === "final" || p.state === "aborted") && !p.message) return;
+          earlyEvents.push(p);
+          return;
+        }
+
+        // Only process events matching our runId
+        if (eventRunId && eventRunId !== myRunId) return;
+        processEvent(p);
       });
 
       gw.request("chat.send", {
@@ -83,8 +98,14 @@ export async function POST(request: NextRequest) {
         idempotencyKey,
       }).then((res) => {
         const r = res as Record<string, unknown> | undefined;
-        if (r?.runId && !myRunId) {
+        if (r?.runId) {
           myRunId = r.runId as string;
+          // Replay buffered events that match our runId
+          for (const evt of earlyEvents) {
+            const rid = evt.runId as string | undefined;
+            if (!rid || rid === myRunId) processEvent(evt);
+          }
+          earlyEvents.length = 0;
         }
       }).catch(fail);
     });
