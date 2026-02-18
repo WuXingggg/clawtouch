@@ -4,8 +4,47 @@ import { randomUUID } from "crypto";
 
 const SESSION_KEY = process.env.OPENCLAW_SESSION_KEY || "agent:main:webclaw";
 
+// ── Content block parsing ──
+
+interface TextBlock { type: "text"; text: string }
+interface ToolCallBlock { type: "toolCall"; id: string; name: string }
+type ContentBlock = TextBlock | ToolCallBlock;
+
+function parseContentBlocks(message: unknown): ContentBlock[] {
+  if (!message || typeof message !== "object") return [];
+  const msg = message as Record<string, unknown>;
+
+  if (typeof msg.content === "string") {
+    return msg.content ? [{ type: "text", text: msg.content }] : [];
+  }
+
+  if (Array.isArray(msg.content)) {
+    const blocks: ContentBlock[] = [];
+    for (const raw of msg.content) {
+      if (!raw || typeof raw !== "object") continue;
+      const b = raw as Record<string, unknown>;
+      if (b.type === "text" && typeof b.text === "string" && b.text) {
+        blocks.push({ type: "text", text: b.text });
+      } else if (b.type === "toolCall" && b.name) {
+        blocks.push({
+          type: "toolCall",
+          id: String(b.id || b.name),
+          name: String(b.name),
+        });
+      }
+    }
+    return blocks;
+  }
+
+  if (typeof msg.text === "string" && msg.text) {
+    return [{ type: "text", text: msg.text }];
+  }
+  return [];
+}
+
+// ── Main handler ──
+
 export async function POST(request: NextRequest) {
-  // Validate request
   let body: { messages?: unknown[] };
   try {
     body = await request.json();
@@ -27,7 +66,6 @@ export async function POST(request: NextRequest) {
     return jsonError("No user message", 400);
   }
 
-  // SSE streaming response
   const stream = new ReadableStream({
     async start(controller) {
       const encoder = new TextEncoder();
@@ -38,9 +76,7 @@ export async function POST(request: NextRequest) {
           controller.enqueue(
             encoder.encode(`data: ${JSON.stringify(data)}\n\n`)
           );
-        } catch {
-          /* controller already closed */
-        }
+        } catch { /* controller already closed */ }
       };
 
       const cleanup = () => {
@@ -52,18 +88,11 @@ export async function POST(request: NextRequest) {
 
       const close = () => {
         cleanup();
-        try {
-          controller.close();
-        } catch {
-          /* already closed */
-        }
+        try { controller.close(); } catch { /* already closed */ }
       };
 
-      // Handle client disconnect (page reload, navigation)
       request.signal.addEventListener("abort", () => {
-        if (!settled) {
-          close();
-        }
+        if (!settled) close();
       });
 
       // Connect to Gateway with retry
@@ -90,16 +119,20 @@ export async function POST(request: NextRequest) {
       }
 
       const idempotencyKey = randomUUID();
-      let latestText = "";
       let myRunId: string | null = null;
       let gotDelta = false;
 
+      // Step detection state
+      const seenToolIds = new Set<string>();
+      let emittedStepCount = 0; // how many text blocks have been finalized as "step"
+      let currentStepText = ""; // text of the step currently streaming
+      let latestFullText = "";  // all text concatenated (fallback for done)
+
       const timeout = setTimeout(() => {
-        send({ type: "done", text: latestText || "(timeout)" });
+        send({ type: "done", text: currentStepText || latestFullText || "(timeout)" });
         close();
       }, 300_000);
 
-      // Send thinking indicator immediately
       send({ type: "thinking" });
 
       const earlyEvents: Array<Record<string, unknown>> = [];
@@ -109,25 +142,73 @@ export async function POST(request: NextRequest) {
 
         if (p.state === "delta" && p.message) {
           gotDelta = true;
-          const text = extractText(p.message);
-          if (text) {
-            latestText = text;
-            send({ type: "delta", text });
+          const blocks = parseContentBlocks(p.message);
+          const textBlocks = blocks.filter((b): b is TextBlock => b.type === "text");
+          const toolBlocks = blocks.filter((b): b is ToolCallBlock => b.type === "toolCall");
+
+          // Detect new tool calls → emit step boundary
+          for (const tc of toolBlocks) {
+            if (seenToolIds.has(tc.id)) continue;
+            seenToolIds.add(tc.id);
+
+            // Find the text block index just before this tool in the original block order
+            const tcIdx = blocks.indexOf(tc);
+            let precedingTextIdx = -1;
+            for (let i = tcIdx - 1; i >= 0; i--) {
+              if (blocks[i].type === "text") {
+                precedingTextIdx = textBlocks.indexOf(blocks[i] as TextBlock);
+                break;
+              }
+            }
+
+            // Finalize preceding text as a completed step (if not already emitted)
+            if (precedingTextIdx >= emittedStepCount) {
+              const stepText = textBlocks[precedingTextIdx].text;
+              if (stepText) {
+                send({ type: "step", text: stepText });
+              }
+              emittedStepCount = precedingTextIdx + 1;
+              currentStepText = "";
+            }
+
+            send({ type: "tool", name: tc.name });
           }
+
+          // Stream the last text block (current step)
+          const lastText = textBlocks.length > 0 ? textBlocks[textBlocks.length - 1] : null;
+          if (lastText) {
+            const lastTextIdx = textBlocks.indexOf(lastText);
+            if (lastTextIdx >= emittedStepCount) {
+              // This text block hasn't been emitted as a step yet → stream it
+              currentStepText = lastText.text;
+              send({ type: "delta", text: currentStepText });
+            }
+          }
+
+          latestFullText = textBlocks.map((b) => b.text).join("\n\n");
+
         } else if (p.state === "final") {
-          const finalText = p.message ? extractText(p.message) : null;
-          // Detect agent-busy: final with no content and no prior deltas
-          if (!finalText && !latestText && !gotDelta) {
+          const blocks = p.message ? parseContentBlocks(p.message) : [];
+          const textBlocks = blocks.filter((b): b is TextBlock => b.type === "text");
+          const finalText = textBlocks.length > 0
+            ? textBlocks[textBlocks.length - 1].text
+            : null;
+
+          if (!finalText && !latestFullText && !gotDelta) {
             send({ type: "error", error: "Agent 正在忙，请稍后重试" });
           } else {
+            // If there are un-emitted text blocks before the last one, emit them as steps
+            for (let i = emittedStepCount; i < textBlocks.length - 1; i++) {
+              send({ type: "step", text: textBlocks[i].text });
+            }
             send({
               type: "done",
-              text: finalText || latestText || "(empty response)",
+              text: finalText || currentStepText || latestFullText || "(empty response)",
             });
           }
           close();
         } else if (p.state === "aborted") {
-          send({ type: "done", text: latestText || "(aborted)" });
+          send({ type: "done", text: currentStepText || latestFullText || "(aborted)" });
           close();
         } else if (p.state === "error") {
           send({
@@ -138,10 +219,9 @@ export async function POST(request: NextRequest) {
         }
       };
 
-      // Handle unexpected WS close (e.g. agent takes too long for WS keepalive)
       gw.onClose(() => {
         if (!settled) {
-          send({ type: "done", text: latestText || "(连接断开)" });
+          send({ type: "done", text: currentStepText || latestFullText || "(连接断开)" });
           close();
         }
       });
@@ -158,7 +238,7 @@ export async function POST(request: NextRequest) {
             (p.state === "final" || p.state === "aborted") &&
             !p.message
           ) {
-            return; // skip stale events
+            return;
           }
           earlyEvents.push(p);
           return;
@@ -168,7 +248,6 @@ export async function POST(request: NextRequest) {
         processEvent(p);
       });
 
-      // Send chat request
       try {
         const res = await gw.request("chat.send", {
           sessionKey: SESSION_KEY,
@@ -210,27 +289,4 @@ function jsonError(message: string, status: number) {
     status,
     headers: { "Content-Type": "application/json" },
   });
-}
-
-function extractText(message: unknown): string | null {
-  if (!message || typeof message !== "object") return null;
-  const msg = message as Record<string, unknown>;
-
-  if (typeof msg.content === "string") return msg.content;
-
-  if (Array.isArray(msg.content)) {
-    const textParts = msg.content
-      .filter(
-        (block: unknown) =>
-          typeof block === "object" &&
-          block !== null &&
-          (block as Record<string, unknown>).type === "text"
-      )
-      .map((block: unknown) => (block as Record<string, string>).text)
-      .filter(Boolean);
-    return textParts.join("") || null;
-  }
-
-  if (typeof msg.text === "string") return msg.text;
-  return null;
 }

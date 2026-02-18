@@ -34,6 +34,8 @@ interface Message {
   role: "user" | "assistant";
   content: string;
   id?: string;
+  msgType?: "text" | "tool";
+  toolName?: string;
 }
 
 type PanelType = "tokens" | "skills" | "cron" | "settings" | null;
@@ -43,6 +45,21 @@ const DEBOUNCE_MS = 1500;
 let msgIdCounter = Date.now();
 function nextMsgId() {
   return `msg-${++msgIdCounter}`;
+}
+
+// ── Tool indicator display ──
+const TOOL_ZH: Record<string, string> = {
+  web_search: "搜索中...",
+  read: "读取文件...",
+  write: "写入文件...",
+  cron: "处理定时任务...",
+  Bash: "执行命令...",
+  list_files: "浏览文件...",
+};
+
+function toolLabel(name?: string): string {
+  if (!name) return "处理中...";
+  return TOOL_ZH[name] || `使用 ${name}...`;
 }
 
 /**
@@ -127,13 +144,17 @@ export default function HomePage() {
 
   useEffect(() => {
     setMessages((prev) => {
-      if (prev.length > 0) {
-        const last = prev[prev.length - 1];
-        if (last.role === "assistant" && !last.content) {
-          return prev.slice(0, -1);
+      // Remove trailing empty assistant messages and tool indicators from interrupted sessions
+      let cleaned = [...prev];
+      while (cleaned.length > 0) {
+        const last = cleaned[cleaned.length - 1];
+        if (last.role === "assistant" && (!last.content || last.msgType === "tool")) {
+          cleaned.pop();
+        } else {
+          break;
         }
       }
-      return prev;
+      return cleaned.length !== prev.length ? cleaned : prev;
     });
   }, []);
 
@@ -156,16 +177,15 @@ export default function HomePage() {
 
   // Process one batch: merge queued texts, call API, stream response
   const processBatch = useCallback(async () => {
-    if (runningRef.current) return; // already running, will be called again when done
+    if (runningRef.current) return;
     if (queueRef.current.length === 0) return;
 
-    // Grab all pending texts and the placeholder
     const texts = [...queueRef.current];
-    const placeholderId = batchPlaceholderRef.current;
+    let curPlaceholder = batchPlaceholderRef.current;
     queueRef.current = [];
     batchPlaceholderRef.current = null;
 
-    if (!placeholderId) return;
+    if (!curPlaceholder) return;
 
     const mergedText = texts.join("\n");
     runningRef.current = true;
@@ -175,9 +195,77 @@ export default function HomePage() {
     abortRef.current = abortController;
 
     const updatePlaceholder = (content: string) => {
+      const pid = curPlaceholder!;
       setMessages((prev) =>
-        prev.map((m) => (m.id === placeholderId ? { ...m, content } : m))
+        prev.map((m) => (m.id === pid ? { ...m, content } : m))
       );
+    };
+
+    // Finalize the current placeholder with text, then create a new empty placeholder
+    const finalizeAndCreateNew = (stepText: string) => {
+      const oldId = curPlaceholder!;
+      const newId = nextMsgId();
+      curPlaceholder = newId;
+      setMessages((prev) => {
+        const idx = prev.findIndex((m) => m.id === oldId);
+        if (idx === -1) return prev;
+        const updated = [...prev];
+        updated[idx] = { ...updated[idx], content: stepText };
+        updated.splice(idx + 1, 0, {
+          role: "assistant",
+          content: "",
+          id: newId,
+        });
+        return updated;
+      });
+    };
+
+    // Insert a tool indicator message, then create a new placeholder after it
+    const insertToolIndicator = (name: string) => {
+      const oldId = curPlaceholder!;
+      const toolId = nextMsgId();
+      const newId = nextMsgId();
+      curPlaceholder = newId;
+      setMessages((prev) => {
+        const idx = prev.findIndex((m) => m.id === oldId);
+        if (idx === -1) return prev;
+        const updated = [...prev];
+        const oldMsg = updated[idx];
+        if (!oldMsg.content) {
+          // Empty placeholder → replace with tool indicator
+          updated[idx] = {
+            role: "assistant",
+            content: "",
+            id: toolId,
+            msgType: "tool",
+            toolName: name,
+          };
+          updated.splice(idx + 1, 0, {
+            role: "assistant",
+            content: "",
+            id: newId,
+          });
+        } else {
+          // Has content → keep it, insert tool + new placeholder after
+          updated.splice(
+            idx + 1,
+            0,
+            {
+              role: "assistant",
+              content: "",
+              id: toolId,
+              msgType: "tool",
+              toolName: name,
+            },
+            {
+              role: "assistant",
+              content: "",
+              id: newId,
+            }
+          );
+        }
+        return updated;
+      });
     };
 
     const isRetryableError = (msg: string) =>
@@ -201,9 +289,7 @@ export default function HomePage() {
         try {
           const errData = await res.json();
           errMsg = errData.error || errMsg;
-        } catch {
-          /* use default */
-        }
+        } catch { /* use default */ }
         throw new Error(errMsg);
       }
 
@@ -233,6 +319,12 @@ export default function HomePage() {
 
           if (event.type === "delta") {
             updatePlaceholder((event.text as string) || "");
+          } else if (event.type === "step") {
+            // Finalize current bubble with step text, create new placeholder
+            finalizeAndCreateNew((event.text as string) || "");
+          } else if (event.type === "tool") {
+            // Insert tool indicator, create new placeholder
+            insertToolIndicator((event.name as string) || "");
           } else if (event.type === "done") {
             updatePlaceholder((event.text as string) || "");
             streamDone = true;
@@ -525,29 +617,35 @@ export default function HomePage() {
             key={msg.id || i}
             className={`flex ${msg.role === "user" ? "justify-end" : "justify-start"}`}
           >
-            <div
-              className={`max-w-[85%] px-3.5 py-2.5 rounded-2xl text-sm leading-relaxed ${
-                msg.role === "user"
-                  ? "bg-primary text-white rounded-br-md whitespace-pre-wrap"
-                  : "bg-card text-text shadow-sm rounded-bl-md chat-md"
-              }`}
-            >
-              {msg.content ? (
-                msg.role === "assistant" ? (
-                  <ReactMarkdown remarkPlugins={[remarkGfm]}>{msg.content}</ReactMarkdown>
+            {msg.msgType === "tool" ? (
+              <div className="flex items-center gap-1.5 px-2 py-1 text-xs text-text-secondary animate-pulse">
+                <span>{toolLabel(msg.toolName)}</span>
+              </div>
+            ) : (
+              <div
+                className={`max-w-[85%] px-3.5 py-2.5 rounded-2xl text-sm leading-relaxed ${
+                  msg.role === "user"
+                    ? "bg-primary text-white rounded-br-md whitespace-pre-wrap"
+                    : "bg-card text-text shadow-sm rounded-bl-md chat-md"
+                }`}
+              >
+                {msg.content ? (
+                  msg.role === "assistant" ? (
+                    <ReactMarkdown remarkPlugins={[remarkGfm]}>{msg.content}</ReactMarkdown>
+                  ) : (
+                    msg.content
+                  )
+                ) : msg.role === "assistant" && msg.id ? (
+                  <span className="thinking-dots text-text-secondary">
+                    <span>.</span>
+                    <span>.</span>
+                    <span>.</span>
+                  </span>
                 ) : (
-                  msg.content
-                )
-              ) : msg.role === "assistant" && msg.id ? (
-                <span className="thinking-dots text-text-secondary">
-                  <span>.</span>
-                  <span>.</span>
-                  <span>.</span>
-                </span>
-              ) : (
-                ""
-              )}
-            </div>
+                  ""
+                )}
+              </div>
+            )}
           </div>
         ))}
       </div>

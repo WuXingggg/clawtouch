@@ -52,8 +52,6 @@ function buildDeviceAuthPayload(opts: {
   token: string | null;
   nonce?: string;
 }): string {
-  // Matches buildDeviceAuthPayload from OpenClaw source
-  // Format: version|deviceId|clientId|clientMode|role|scopes|signedAtMs|token[|nonce]
   const version = opts.nonce ? "v2" : "v1";
   const base = [
     version,
@@ -80,7 +78,11 @@ export interface GatewayConnection {
   close: () => void;
 }
 
-export function connectToGateway(): Promise<GatewayConnection> {
+// ── Persistent singleton connection ──
+let sharedConnection: GatewayConnection | null = null;
+let connectingPromise: Promise<GatewayConnection> | null = null;
+
+function createRawConnection(): Promise<GatewayConnection> {
   return new Promise((resolve, reject) => {
     const device = loadDeviceIdentity();
     const ws = new WebSocket(GATEWAY_WS_URL);
@@ -89,8 +91,8 @@ export function connectToGateway(): Promise<GatewayConnection> {
       string,
       { resolve: (v: unknown) => void; reject: (e: Error) => void }
     >();
-    let eventHandler: ((event: string, payload: unknown) => void) | null =
-      null;
+    const eventHandlers: Array<(event: string, payload: unknown) => void> = [];
+    const closeHandlers: Array<() => void> = [];
     let connected = false;
 
     const nextId = () => `wc-${++reqCounter}-${Date.now()}`;
@@ -149,6 +151,14 @@ export function connectToGateway(): Promise<GatewayConnection> {
       });
     };
 
+    const conn: GatewayConnection = {
+      ws,
+      request: sendReq,
+      onEvent: (handler) => { eventHandlers.push(handler); },
+      onClose: (handler) => { closeHandlers.push(handler); },
+      close: () => ws.close(),
+    };
+
     ws.on("message", (data: WebSocket.Data) => {
       try {
         const msg = JSON.parse(data.toString());
@@ -159,17 +169,7 @@ export function connectToGateway(): Promise<GatewayConnection> {
             sendConnect(nonce)
               .then(() => {
                 connected = true;
-                resolve({
-                  ws,
-                  request: sendReq,
-                  onEvent: (handler) => {
-                    eventHandler = handler;
-                  },
-                  onClose: (handler) => {
-                    closeHandler = handler;
-                  },
-                  close: () => ws.close(),
-                });
+                resolve(conn);
               })
               .catch((err) => {
                 ws.close();
@@ -177,11 +177,7 @@ export function connectToGateway(): Promise<GatewayConnection> {
               });
             return;
           }
-
-          // Forward events to handler
-          if (eventHandler) {
-            eventHandler(msg.event, msg.payload);
-          }
+          for (const h of eventHandlers) h(msg.event, msg.payload);
           return;
         }
 
@@ -192,29 +188,28 @@ export function connectToGateway(): Promise<GatewayConnection> {
             if (msg.ok) {
               handler.resolve(msg.payload);
             } else {
-              handler.reject(
-                new Error(msg.error?.message || "RPC error")
-              );
+              handler.reject(new Error(msg.error?.message || "RPC error"));
             }
           }
         }
-      } catch {
-        // skip
-      }
+      } catch { /* skip */ }
     });
 
     ws.on("error", (err: Error) => {
       if (!connected) reject(err);
     });
 
-    let closeHandler: (() => void) | null = null;
-
     ws.on("close", () => {
+      // Clear singleton so next request reconnects
+      if (sharedConnection === conn) {
+        sharedConnection = null;
+        connectingPromise = null;
+      }
       for (const [, handler] of pending) {
         handler.reject(new Error("WebSocket closed"));
       }
       pending.clear();
-      closeHandler?.();
+      for (const h of closeHandlers) h();
     });
 
     setTimeout(() => {
@@ -224,4 +219,32 @@ export function connectToGateway(): Promise<GatewayConnection> {
       }
     }, 5000);
   });
+}
+
+/**
+ * Returns a shared, persistent WebSocket connection to the gateway.
+ * Reconnects automatically if the connection was closed.
+ */
+export async function connectToGateway(): Promise<GatewayConnection> {
+  // Reuse live connection
+  if (sharedConnection && sharedConnection.ws.readyState === WebSocket.OPEN) {
+    return sharedConnection;
+  }
+
+  // Wait for in-progress connection
+  if (connectingPromise) {
+    return connectingPromise;
+  }
+
+  // Create new connection
+  connectingPromise = createRawConnection().then((conn) => {
+    sharedConnection = conn;
+    connectingPromise = null;
+    return conn;
+  }).catch((err) => {
+    connectingPromise = null;
+    throw err;
+  });
+
+  return connectingPromise;
 }
