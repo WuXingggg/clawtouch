@@ -1,5 +1,6 @@
 import { runOpenClaw } from "./openclaw";
 import { execFile } from "child_process";
+import { readdir } from "fs/promises";
 import { homedir } from "os";
 import { join } from "path";
 
@@ -92,6 +93,17 @@ export async function installHubSkill(slug: string): Promise<{ ok: boolean; erro
     }
   }
   return { ok: false, error: "安装失败" };
+}
+
+/** Scan ~/.openclaw/skills/ to get installed ClawHub slugs (dir names) */
+export async function installedHubSlugs(): Promise<string[]> {
+  try {
+    const dir = join(homedir(), ".openclaw", "skills");
+    const entries = await readdir(dir, { withFileTypes: true });
+    return entries.filter((e) => e.isDirectory()).map((e) => e.name);
+  } catch {
+    return [];
+  }
 }
 
 export async function toggleSkill(

@@ -1,9 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
-import { listSkills, toggleSkill, installHubSkill } from "@/lib/skills";
+import { listSkills, toggleSkill, installHubSkill, installedHubSlugs } from "@/lib/skills";
 
 export async function GET() {
-  const skills = await listSkills();
-  return NextResponse.json(skills);
+  const [skills, hubSlugs] = await Promise.all([listSkills(), installedHubSlugs()]);
+  return NextResponse.json({ skills, hubSlugs });
 }
 
 export async function PATCH(request: NextRequest) {

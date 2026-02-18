@@ -205,16 +205,22 @@ function zhDesc(name: string, fallback: string): string {
   return LOCAL_ZH[name] || fallback;
 }
 
+interface SkillsResponse {
+  skills: Skill[];
+  hubSlugs: string[];
+}
+
 export function SkillsPanel() {
-  const { data: skills, mutate } = useSWR<Skill[]>("/api/skills", fetcher);
+  const { data, mutate } = useSWR<SkillsResponse>("/api/skills", fetcher);
   const [search, setSearch] = useState("");
   const [toggling, setToggling] = useState<string | null>(null);
   const [installing, setInstalling] = useState<string | null>(null);
   const [installError, setInstallError] = useState<string | null>(null);
-  const [installedSlugs, setInstalledSlugs] = useState<Set<string>>(new Set());
-  const loading = skills === undefined;
+  const [justInstalled, setJustInstalled] = useState<Set<string>>(new Set());
+  const loading = data === undefined;
 
-  const allSkills = skills || [];
+  const allSkills = data?.skills || [];
+  const serverHubSlugs = data?.hubSlugs || [];
   const enabled = allSkills.filter((s) => s.enabled);
   // eligible but user-disabled → can toggle on
   // not eligible → missing deps, show as unavailable
@@ -232,10 +238,10 @@ export function SkillsPanel() {
     ? disabled.filter((s) => match(s.name) || match(zhDesc(s.name, s.description)))
     : disabled;
 
-  // Filter ClawHub skills: exclude already installed + search
-  const installedNames = new Set(allSkills.map((s) => s.name));
+  // Filter ClawHub skills: exclude already installed (by slug from fs scan) + search
+  const installedSlugSet = new Set([...serverHubSlugs, ...justInstalled]);
   const filteredHub = CLAWHUB_SKILLS.filter((h) => {
-    if (installedNames.has(h.slug) || installedSlugs.has(h.slug)) return false;
+    if (installedSlugSet.has(h.slug)) return false;
     if (search && !match(h.name) && !match(h.desc) && !match(h.slug)) return false;
     return true;
   });
@@ -264,7 +270,7 @@ export function SkillsPanel() {
         const data = await res.json();
         setInstallError(`${slug}: ${data.error || "安装失败"}`);
       } else {
-        setInstalledSlugs((prev) => new Set(prev).add(slug));
+        setJustInstalled((prev) => new Set(prev).add(slug));
         await mutate();
       }
     } catch {
