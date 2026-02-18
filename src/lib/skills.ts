@@ -1,10 +1,11 @@
-import { readConfig, writeConfig } from "./config";
 import { runOpenClaw } from "./openclaw";
 
 export interface Skill {
   name: string;
   description: string;
-  enabled: boolean;
+  enabled: boolean;    // eligible && !disabled
+  eligible: boolean;   // has all dependencies
+  disabled: boolean;   // user explicitly disabled
   source: string;
   userInvocable: boolean;
 }
@@ -25,6 +26,8 @@ export async function listSkills(): Promise<Skill[]> {
         name: String(sk.name || ""),
         description: String(sk.description || ""),
         enabled: eligible && !disabled,
+        eligible,
+        disabled,
         source: String(sk.source || ""),
         userInvocable: true,
       };
@@ -38,11 +41,10 @@ export async function toggleSkill(
   name: string,
   enabled: boolean
 ): Promise<void> {
-  const config = await readConfig();
-  if (!config.skills) config.skills = {};
-  const skills = config.skills as Record<string, unknown>;
-  if (!skills.entries) skills.entries = {};
-  const entries = skills.entries as Record<string, { enabled: boolean }>;
-  entries[name] = { ...entries[name], enabled };
-  await writeConfig(config);
+  if (enabled) {
+    // Remove disabled entry (or set enabled: true)
+    await runOpenClaw(["config", "set", `skills.entries.${name}.enabled`, "true"]);
+  } else {
+    await runOpenClaw(["config", "set", `skills.entries.${name}.enabled`, "false"]);
+  }
 }

@@ -13,6 +13,8 @@ interface Skill {
   name: string;
   description: string;
   enabled: boolean;
+  eligible: boolean;
+  disabled: boolean;
   userInvocable: boolean;
 }
 
@@ -199,10 +201,15 @@ export function SkillsPanel() {
   const { data: skills, mutate } = useSWR<Skill[]>("/api/skills", fetcher);
   const [search, setSearch] = useState("");
   const [toggling, setToggling] = useState<string | null>(null);
+  const loading = skills === undefined;
 
   const allSkills = skills || [];
   const enabled = allSkills.filter((s) => s.enabled);
-  const disabled = allSkills.filter((s) => !s.enabled);
+  // eligible but user-disabled → can toggle on
+  // not eligible → missing deps, show as unavailable
+  const canEnable = allSkills.filter((s) => !s.enabled && s.eligible);
+  const unavailable = allSkills.filter((s) => !s.enabled && !s.eligible);
+  const disabled = [...canEnable, ...unavailable];
 
   // Filter by search
   const match = (text: string) =>
@@ -232,6 +239,14 @@ export function SkillsPanel() {
     await mutate();
     setToggling(null);
   };
+
+  if (loading) {
+    return (
+      <div className="py-8 text-center text-sm text-text-secondary animate-pulse">
+        加载技能列表...
+      </div>
+    );
+  }
 
   return (
     <div className="space-y-1 py-3">
@@ -288,11 +303,15 @@ export function SkillsPanel() {
                   {zhDesc(skill.name, skill.description)}
                 </p>
               </div>
-              <Toggle
-                checked={false}
-                onChange={() => handleToggle(skill.name, true)}
-                disabled={toggling === skill.name}
-              />
+              {skill.eligible ? (
+                <Toggle
+                  checked={false}
+                  onChange={() => handleToggle(skill.name, true)}
+                  disabled={toggling === skill.name}
+                />
+              ) : (
+                <Badge variant="default">缺依赖</Badge>
+              )}
             </div>
           </Card>
         ))}
