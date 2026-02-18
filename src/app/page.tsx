@@ -36,6 +36,15 @@ interface Message {
   id?: string;
   msgType?: "text" | "tool";
   toolName?: string;
+  images?: string[]; // image URLs for display
+}
+
+interface Attachment {
+  name: string;
+  url: string;
+  mimeType?: string;
+  base64?: string;
+  isImage: boolean;
 }
 
 type PanelType = "tokens" | "skills" | "cron" | "settings" | null;
@@ -119,7 +128,7 @@ export default function HomePage() {
   const abortRef = useRef<AbortController | null>(null);
 
   // Queue system
-  const queueRef = useRef<string[]>([]); // pending texts to send
+  const queueRef = useRef<Array<{ text: string; attachments?: Attachment[] }>>([]); // pending items
   const batchPlaceholderRef = useRef<string | null>(null); // current batch placeholder id
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const runningRef = useRef(false); // is an API call in progress?
@@ -127,7 +136,7 @@ export default function HomePage() {
   const [activePanel, setActivePanel] = useState<PanelType>(null);
 
   // Attachments
-  const [attachments, setAttachments] = useState<{ name: string; url: string }[]>([]);
+  const [attachments, setAttachments] = useState<Attachment[]>([]);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const cameraInputRef = useRef<HTMLInputElement>(null);
   const galleryInputRef = useRef<HTMLInputElement>(null);
@@ -180,14 +189,15 @@ export default function HomePage() {
     if (runningRef.current) return;
     if (queueRef.current.length === 0) return;
 
-    const texts = [...queueRef.current];
+    const items = [...queueRef.current];
     let curPlaceholder = batchPlaceholderRef.current;
     queueRef.current = [];
     batchPlaceholderRef.current = null;
 
     if (!curPlaceholder) return;
 
-    const mergedText = texts.join("\n");
+    const mergedText = items.map((i) => i.text).join("\n");
+    const allAttachments = items.flatMap((i) => i.attachments || []);
     runningRef.current = true;
     setStreaming(true);
 
@@ -275,12 +285,23 @@ export default function HomePage() {
     let clientRetry = 0;
 
     const doFetch = async (): Promise<void> => {
+      const apiBody: Record<string, unknown> = {
+        messages: [{ role: "user", content: mergedText }],
+      };
+      // Send image attachments as structured data for gateway
+      const imageAtts = allAttachments.filter((a) => a.isImage && a.base64);
+      if (imageAtts.length > 0) {
+        apiBody.attachments = imageAtts.map((a) => ({
+          mimeType: a.mimeType || "image/jpeg",
+          fileName: a.name,
+          content: a.base64,
+        }));
+      }
+
       const res = await fetch("/api/chat", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          messages: [{ role: "user", content: mergedText }],
-        }),
+        body: JSON.stringify(apiBody),
         signal: abortController.signal,
       });
 
@@ -320,11 +341,22 @@ export default function HomePage() {
           if (event.type === "delta") {
             updatePlaceholder((event.text as string) || "");
           } else if (event.type === "step") {
-            // Finalize current bubble with step text, create new placeholder
             finalizeAndCreateNew((event.text as string) || "");
           } else if (event.type === "tool") {
-            // Insert tool indicator, create new placeholder
             insertToolIndicator((event.name as string) || "");
+          } else if (event.type === "image") {
+            // Append image markdown to current message
+            const url = event.url as string;
+            if (url) {
+              const pid = curPlaceholder!;
+              setMessages((prev) =>
+                prev.map((m) =>
+                  m.id === pid
+                    ? { ...m, content: (m.content ? m.content + "\n\n" : "") + `![](${url})` }
+                    : m
+                )
+              );
+            }
           } else if (event.type === "done") {
             updatePlaceholder((event.text as string) || "");
             streamDone = true;
@@ -373,14 +405,19 @@ export default function HomePage() {
 
   // Enqueue a message: show user bubble immediately, debounce before sending
   const enqueueMessage = useCallback(
-    (text: string) => {
+    (text: string, imageAttachments?: Attachment[]) => {
+      const userMsg: Message = { role: "user", content: text };
+      if (imageAttachments?.length) {
+        userMsg.images = imageAttachments.map((a) => a.url);
+      }
+
       // If no current batch placeholder, create one
       if (!batchPlaceholderRef.current) {
         const id = nextMsgId();
         batchPlaceholderRef.current = id;
         setMessages((prev) => [
           ...prev,
-          { role: "user", content: text },
+          userMsg,
           { role: "assistant", content: "", id },
         ]);
       } else {
@@ -388,16 +425,16 @@ export default function HomePage() {
         const pid = batchPlaceholderRef.current;
         setMessages((prev) => {
           const idx = prev.findIndex((m) => m.id === pid);
-          if (idx === -1) return [...prev, { role: "user", content: text }];
+          if (idx === -1) return [...prev, userMsg];
           return [
             ...prev.slice(0, idx),
-            { role: "user", content: text },
+            userMsg,
             ...prev.slice(idx),
           ];
         });
       }
 
-      queueRef.current.push(text);
+      queueRef.current.push({ text, attachments: imageAttachments });
 
       // Reset debounce timer
       if (debounceRef.current) clearTimeout(debounceRef.current);
@@ -414,19 +451,28 @@ export default function HomePage() {
     const text = input.trim();
     if (!text && attachments.length === 0) return;
 
-    // Build message with attachments
+    // Separate image attachments from non-image attachments
+    const imageAtts = attachments.filter((a) => a.isImage && a.base64);
+    const otherAtts = attachments.filter((a) => !a.isImage || !a.base64);
+
+    // Build message text (non-image attachments use markdown links)
     let message = text;
-    if (attachments.length > 0) {
-      const attachList = attachments
+    if (otherAtts.length > 0) {
+      const attachList = otherAtts
         .map((a) => `[附件: ${a.name}](${a.url})`)
         .join("\n");
       message = message ? `${message}\n\n${attachList}` : attachList;
-      setAttachments([]);
     }
 
+    // For image-only sends with no text
+    if (!message && imageAtts.length > 0) {
+      message = "请看图片";
+    }
+
+    if (attachments.length > 0) setAttachments([]);
     if (!message) return;
     setInput("");
-    enqueueMessage(message);
+    enqueueMessage(message, imageAtts.length > 0 ? imageAtts : undefined);
 
     // Flush immediately
     if (debounceRef.current) {
@@ -473,15 +519,33 @@ export default function HomePage() {
     if (!files || files.length === 0) return;
     setShowAttachMenu(false);
     for (const file of Array.from(files)) {
+      const isImage = file.type.startsWith("image/");
+      if (isImage && file.size > 5 * 1024 * 1024) {
+        setAttachments((prev) => [...prev, {
+          name: `[超过5MB] ${file.name}`, url: "", isImage: false,
+        }]);
+        continue;
+      }
       const formData = new FormData();
       formData.append("file", file);
       try {
         const res = await fetch("/api/upload", { method: "POST", body: formData });
-        if (!res.ok) throw new Error("Upload failed");
+        if (!res.ok) {
+          const err = await res.json().catch(() => null);
+          throw new Error(err?.error || "Upload failed");
+        }
         const data = await res.json();
-        setAttachments((prev) => [...prev, { name: file.name, url: data.url }]);
+        setAttachments((prev) => [...prev, {
+          name: file.name,
+          url: data.url,
+          mimeType: data.mimeType,
+          base64: data.base64,
+          isImage: !!data.base64,
+        }]);
       } catch {
-        setAttachments((prev) => [...prev, { name: file.name, url: `[上传失败] ${file.name}` }]);
+        setAttachments((prev) => [...prev, {
+          name: file.name, url: `[上传失败] ${file.name}`, isImage: false,
+        }]);
       }
     }
   }, []);
@@ -629,9 +693,38 @@ export default function HomePage() {
                     : "bg-card text-text shadow-sm rounded-bl-md chat-md"
                 }`}
               >
+                {msg.images && msg.images.length > 0 && (
+                  <div className="flex gap-1.5 mb-1.5 flex-wrap">
+                    {msg.images.map((url, j) => (
+                      <img
+                        key={j}
+                        src={url}
+                        alt=""
+                        className="rounded-lg max-w-[200px] max-h-[200px] object-cover cursor-pointer"
+                        onClick={() => window.open(url, "_blank")}
+                        loading="lazy"
+                      />
+                    ))}
+                  </div>
+                )}
                 {msg.content ? (
                   msg.role === "assistant" ? (
-                    <ReactMarkdown remarkPlugins={[remarkGfm]}>{msg.content}</ReactMarkdown>
+                    <ReactMarkdown
+                      remarkPlugins={[remarkGfm]}
+                      components={{
+                        img: ({ src, alt }) => (
+                          <img
+                            src={typeof src === "string" ? src : undefined}
+                            alt={alt || ""}
+                            className="max-w-full rounded-lg my-1 cursor-pointer"
+                            onClick={() => typeof src === "string" && window.open(src, "_blank")}
+                            loading="lazy"
+                          />
+                        ),
+                      }}
+                    >
+                      {msg.content}
+                    </ReactMarkdown>
                   ) : (
                     msg.content
                   )
@@ -672,15 +765,27 @@ export default function HomePage() {
         {attachments.length > 0 && (
           <div className="flex gap-2 px-4 pt-1 overflow-x-auto no-scrollbar">
             {attachments.map((att, i) => (
-              <div
-                key={i}
-                className="flex items-center gap-1 px-2 py-1 rounded-lg bg-primary/10 text-xs text-primary shrink-0"
-              >
-                <span className="max-w-[120px] truncate">{att.name}</span>
-                <button onClick={() => removeAttachment(i)} className="p-0.5">
-                  <X size={12} />
-                </button>
-              </div>
+              att.isImage ? (
+                <div key={i} className="relative shrink-0 w-16 h-16 rounded-lg overflow-hidden border border-border">
+                  <img src={att.url} alt={att.name} className="w-full h-full object-cover" />
+                  <button
+                    onClick={() => removeAttachment(i)}
+                    className="absolute -top-0.5 -right-0.5 w-5 h-5 bg-black/60 text-white rounded-full flex items-center justify-center"
+                  >
+                    <X size={10} />
+                  </button>
+                </div>
+              ) : (
+                <div
+                  key={i}
+                  className="flex items-center gap-1 px-2 py-1 rounded-lg bg-primary/10 text-xs text-primary shrink-0"
+                >
+                  <span className="max-w-[120px] truncate">{att.name}</span>
+                  <button onClick={() => removeAttachment(i)} className="p-0.5">
+                    <X size={12} />
+                  </button>
+                </div>
+              )
             ))}
           </div>
         )}

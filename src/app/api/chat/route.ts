@@ -1,14 +1,18 @@
 import { NextRequest } from "next/server";
 import { connectToGateway } from "@/lib/gateway-ws";
 import { randomUUID } from "crypto";
+import { writeFile, mkdir } from "fs/promises";
+import { join } from "path";
 
 const SESSION_KEY = process.env.OPENCLAW_SESSION_KEY || "agent:main:webclaw";
+const UPLOAD_DIR = join(process.cwd(), "public", "uploads");
 
 // ── Content block parsing ──
 
 interface TextBlock { type: "text"; text: string }
 interface ToolCallBlock { type: "toolCall"; id: string; name: string }
-type ContentBlock = TextBlock | ToolCallBlock;
+interface ImageBlock { type: "image"; data: string; mimeType: string }
+type ContentBlock = TextBlock | ToolCallBlock | ImageBlock;
 
 function parseContentBlocks(message: unknown): ContentBlock[] {
   if (!message || typeof message !== "object") return [];
@@ -31,6 +35,12 @@ function parseContentBlocks(message: unknown): ContentBlock[] {
           id: String(b.id || b.name),
           name: String(b.name),
         });
+      } else if (b.type === "image" && typeof b.data === "string" && b.data) {
+        blocks.push({
+          type: "image",
+          data: b.data,
+          mimeType: (b.mimeType as string) || "image/png",
+        });
       }
     }
     return blocks;
@@ -45,7 +55,10 @@ function parseContentBlocks(message: unknown): ContentBlock[] {
 // ── Main handler ──
 
 export async function POST(request: NextRequest) {
-  let body: { messages?: unknown[] };
+  let body: {
+    messages?: unknown[];
+    attachments?: Array<{ mimeType: string; fileName: string; content: string }>;
+  };
   try {
     body = await request.json();
   } catch {
@@ -124,9 +137,27 @@ export async function POST(request: NextRequest) {
 
       // Step detection state
       const seenToolIds = new Set<string>();
+      const seenImageHashes = new Set<string>();
       let emittedStepCount = 0; // how many text blocks have been finalized as "step"
       let currentStepText = ""; // text of the step currently streaming
       let latestFullText = "";  // all text concatenated (fallback for done)
+
+      // Save response image to disk, return URL
+      const saveImage = async (img: ImageBlock): Promise<string | null> => {
+        try {
+          // Dedup by first 64 chars of base64
+          const hash = img.data.slice(0, 64);
+          if (seenImageHashes.has(hash)) return null;
+          seenImageHashes.add(hash);
+          await mkdir(UPLOAD_DIR, { recursive: true });
+          const ext = img.mimeType === "image/png" ? ".png" : img.mimeType === "image/gif" ? ".gif" : ".jpg";
+          const filename = `${randomUUID()}${ext}`;
+          await writeFile(join(UPLOAD_DIR, filename), Buffer.from(img.data, "base64"));
+          return `/uploads/${filename}`;
+        } catch {
+          return null;
+        }
+      };
 
       const timeout = setTimeout(() => {
         send({ type: "done", text: currentStepText || latestFullText || "(timeout)" });
@@ -185,6 +216,14 @@ export async function POST(request: NextRequest) {
             }
           }
 
+          // Emit any new image blocks
+          const imageBlocks = blocks.filter((b): b is ImageBlock => b.type === "image");
+          for (const img of imageBlocks) {
+            saveImage(img).then((url) => {
+              if (url) send({ type: "image", url });
+            });
+          }
+
           latestFullText = textBlocks.map((b) => b.text).join("\n\n");
 
         } else if (p.state === "final") {
@@ -196,17 +235,28 @@ export async function POST(request: NextRequest) {
 
           if (!finalText && !latestFullText && !gotDelta) {
             send({ type: "error", error: "Agent 正在忙，请稍后重试" });
+            close();
           } else {
             // If there are un-emitted text blocks before the last one, emit them as steps
             for (let i = emittedStepCount; i < textBlocks.length - 1; i++) {
               send({ type: "step", text: textBlocks[i].text });
             }
-            send({
-              type: "done",
-              text: finalText || currentStepText || latestFullText || "(empty response)",
+
+            // Save any final image blocks before closing
+            const finalImages = blocks.filter((b): b is ImageBlock => b.type === "image");
+            const saveAll = finalImages.map((img) => saveImage(img));
+            Promise.all(saveAll).then((urls) => {
+              for (const url of urls) {
+                if (url) send({ type: "image", url });
+              }
+              send({
+                type: "done",
+                text: finalText || currentStepText || latestFullText || "(empty response)",
+              });
+              close();
             });
+            return; // close() called in the promise
           }
-          close();
         } else if (p.state === "aborted") {
           send({ type: "done", text: currentStepText || latestFullText || "(aborted)" });
           close();
@@ -249,12 +299,16 @@ export async function POST(request: NextRequest) {
       });
 
       try {
-        const res = await gw.request("chat.send", {
+        const sendParams: Record<string, unknown> = {
           sessionKey: SESSION_KEY,
           message: lastUserMsg.content,
           deliver: false,
           idempotencyKey,
-        });
+        };
+        if (body.attachments?.length) {
+          sendParams.attachments = body.attachments;
+        }
+        const res = await gw.request("chat.send", sendParams);
         const r = res as Record<string, unknown> | undefined;
         if (r?.runId) {
           myRunId = r.runId as string;
