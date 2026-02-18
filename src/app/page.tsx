@@ -39,7 +39,7 @@ type PanelType = "tokens" | "skills" | "cron" | "settings" | null;
 
 const DEBOUNCE_MS = 1500;
 
-let msgIdCounter = 0;
+let msgIdCounter = Date.now();
 function nextMsgId() {
   return `msg-${++msgIdCounter}`;
 }
