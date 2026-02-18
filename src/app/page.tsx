@@ -44,17 +44,26 @@ export default function HomePage() {
     }
     return [];
   });
-  const [input, setInput] = useState("");
+  const [input, setInput] = useState(() => {
+    if (typeof window !== "undefined") {
+      return sessionStorage.getItem("webclaw-input") || "";
+    }
+    return "";
+  });
   const [loading, setLoading] = useState(false);
   const listRef = useRef<HTMLDivElement>(null);
 
   // Panel state
   const [activePanel, setActivePanel] = useState<PanelType>(null);
 
-  // Persist & scroll
+  // Persist chat & input
   useEffect(() => {
     localStorage.setItem("webclaw-chat", JSON.stringify(messages));
   }, [messages]);
+
+  useEffect(() => {
+    sessionStorage.setItem("webclaw-input", input);
+  }, [input]);
 
   useEffect(() => {
     if (listRef.current) {
