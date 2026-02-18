@@ -25,25 +25,30 @@ const fetcher = (url: string) => fetch(url).then((r) => r.json());
 interface Message {
   role: "user" | "assistant";
   content: string;
-  /** Unique id to track which placeholder to update */
   id?: string;
 }
 
 type PanelType = "tokens" | "skills" | "cron" | "settings" | null;
+
+const DEBOUNCE_MS = 1500;
 
 let msgIdCounter = 0;
 function nextMsgId() {
   return `msg-${++msgIdCounter}`;
 }
 
+/**
+ * Message queue with debounce + serial execution.
+ * - User can send messages at any time (input never locked)
+ * - Messages within DEBOUNCE_MS are merged into one batch
+ * - Only one API call runs at a time; next batch waits for current to finish
+ */
 export default function HomePage() {
-  // Gateway status
   const { data: gateway } = useSWR("/api/gateway", fetcher, {
     refreshInterval: 15000,
   });
   const isOnline = gateway?.online;
 
-  // Chat state
   const [messages, setMessages] = useState<Message[]>(() => {
     if (typeof window !== "undefined") {
       const saved = localStorage.getItem("webclaw-chat");
@@ -57,35 +62,39 @@ export default function HomePage() {
     }
     return "";
   });
-  // Track number of active streams (allows concurrent sends)
-  const [activeStreams, setActiveStreams] = useState(0);
+  const [streaming, setStreaming] = useState(false);
   const listRef = useRef<HTMLDivElement>(null);
-  // Track all active abort controllers
-  const abortsRef = useRef<Set<AbortController>>(new Set());
+  const abortRef = useRef<AbortController | null>(null);
 
-  // Panel state
+  // Queue system
+  const queueRef = useRef<string[]>([]); // pending texts to send
+  const batchPlaceholderRef = useRef<string | null>(null); // current batch placeholder id
+  const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const runningRef = useRef(false); // is an API call in progress?
+
   const [activePanel, setActivePanel] = useState<PanelType>(null);
 
-  // Persist chat & input
+  // Persist
   useEffect(() => {
     localStorage.setItem("webclaw-chat", JSON.stringify(messages));
   }, [messages]);
 
-  // On mount: remove trailing empty assistant placeholders (from interrupted requests)
   useEffect(() => {
     setMessages((prev) => {
-      const cleaned = prev.filter(
-        (m, i) =>
-          !(m.role === "assistant" && !m.content && i === prev.length - 1)
-      );
-      return cleaned.length !== prev.length ? cleaned : prev;
+      if (prev.length > 0) {
+        const last = prev[prev.length - 1];
+        if (last.role === "assistant" && !last.content) {
+          return prev.slice(0, -1);
+        }
+      }
+      return prev;
     });
   }, []);
 
-  // Clean up on unmount
   useEffect(() => {
     return () => {
-      for (const ac of abortsRef.current) ac.abort();
+      abortRef.current?.abort();
+      if (debounceRef.current) clearTimeout(debounceRef.current);
     };
   }, []);
 
@@ -93,40 +102,35 @@ export default function HomePage() {
     sessionStorage.setItem("webclaw-input", input);
   }, [input]);
 
-  // Auto-scroll on new messages
   useEffect(() => {
     if (listRef.current) {
       listRef.current.scrollTop = listRef.current.scrollHeight;
     }
   }, [messages]);
 
-  const sendMessage = useCallback(async () => {
-    const text = input.trim();
-    if (!text) return;
+  // Process one batch: merge queued texts, call API, stream response
+  const processBatch = useCallback(async () => {
+    if (runningRef.current) return; // already running, will be called again when done
+    if (queueRef.current.length === 0) return;
 
-    setInput("");
+    // Grab all pending texts and the placeholder
+    const texts = [...queueRef.current];
+    const placeholderId = batchPlaceholderRef.current;
+    queueRef.current = [];
+    batchPlaceholderRef.current = null;
 
-    // Create unique id for this assistant response placeholder
-    const placeholderId = nextMsgId();
+    if (!placeholderId) return;
 
-    // Add user message + assistant placeholder
-    setMessages((prev) => [
-      ...prev,
-      { role: "user", content: text },
-      { role: "assistant", content: "", id: placeholderId },
-    ]);
-
-    setActiveStreams((n) => n + 1);
+    const mergedText = texts.join("\n");
+    runningRef.current = true;
+    setStreaming(true);
 
     const abortController = new AbortController();
-    abortsRef.current.add(abortController);
+    abortRef.current = abortController;
 
-    // Helper: update only this placeholder by id
     const updatePlaceholder = (content: string) => {
       setMessages((prev) =>
-        prev.map((m) =>
-          m.id === placeholderId ? { ...m, content } : m
-        )
+        prev.map((m) => (m.id === placeholderId ? { ...m, content } : m))
       );
     };
 
@@ -135,12 +139,11 @@ export default function HomePage() {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          messages: [{ role: "user", content: text }],
+          messages: [{ role: "user", content: mergedText }],
         }),
         signal: abortController.signal,
       });
 
-      // Validation errors return JSON, not SSE
       if (!res.ok) {
         let errMsg = `Error: ${res.status}`;
         try {
@@ -152,7 +155,6 @@ export default function HomePage() {
         throw new Error(errMsg);
       }
 
-      // Read SSE stream
       const reader = res.body!.getReader();
       const decoder = new TextDecoder();
       let buffer = "";
@@ -162,8 +164,6 @@ export default function HomePage() {
         if (done) break;
 
         buffer += decoder.decode(value, { stream: true });
-
-        // Process complete SSE events (separated by \n\n)
         const parts = buffer.split("\n\n");
         buffer = parts.pop() || "";
 
@@ -191,22 +191,83 @@ export default function HomePage() {
       console.error("[webclaw] chat error:", msg);
       updatePlaceholder(`连接失败: ${msg}`);
     } finally {
-      setActiveStreams((n) => n - 1);
-      abortsRef.current.delete(abortController);
-    }
-  }, [input]);
+      runningRef.current = false;
+      abortRef.current = null;
+      setStreaming(false);
 
-  const handleStopAll = useCallback(() => {
-    for (const ac of abortsRef.current) ac.abort();
+      // If more messages queued while we were running, process next batch
+      if (queueRef.current.length > 0) {
+        processBatch();
+      }
+    }
+  }, []);
+
+  // Enqueue a message: show user bubble immediately, debounce before sending
+  const enqueueMessage = useCallback(
+    (text: string) => {
+      // If no current batch placeholder, create one
+      if (!batchPlaceholderRef.current) {
+        const id = nextMsgId();
+        batchPlaceholderRef.current = id;
+        setMessages((prev) => [
+          ...prev,
+          { role: "user", content: text },
+          { role: "assistant", content: "", id },
+        ]);
+      } else {
+        // Insert user bubble before the placeholder
+        const pid = batchPlaceholderRef.current;
+        setMessages((prev) => {
+          const idx = prev.findIndex((m) => m.id === pid);
+          if (idx === -1) return [...prev, { role: "user", content: text }];
+          return [
+            ...prev.slice(0, idx),
+            { role: "user", content: text },
+            ...prev.slice(idx),
+          ];
+        });
+      }
+
+      queueRef.current.push(text);
+
+      // Reset debounce timer
+      if (debounceRef.current) clearTimeout(debounceRef.current);
+      debounceRef.current = setTimeout(() => {
+        debounceRef.current = null;
+        processBatch();
+      }, DEBOUNCE_MS);
+    },
+    [processBatch]
+  );
+
+  // Send button: enqueue + flush immediately (no debounce wait)
+  const handleSend = useCallback(() => {
+    const text = input.trim();
+    if (!text) return;
+    setInput("");
+    enqueueMessage(text);
+
+    // Flush immediately
+    if (debounceRef.current) {
+      clearTimeout(debounceRef.current);
+      debounceRef.current = null;
+    }
+    // Small delay to let multiple rapid Enter-key presses accumulate
+    setTimeout(() => processBatch(), 50);
+  }, [input, enqueueMessage, processBatch]);
+
+  const handleStop = useCallback(() => {
+    abortRef.current?.abort();
   }, []);
 
   const handleClear = () => {
-    handleStopAll();
+    abortRef.current?.abort();
+    if (debounceRef.current) clearTimeout(debounceRef.current);
+    queueRef.current = [];
+    batchPlaceholderRef.current = null;
     setMessages([]);
     localStorage.removeItem("webclaw-chat");
   };
-
-  const isStreaming = activeStreams > 0;
 
   const toolbarItems = [
     {
@@ -254,20 +315,15 @@ export default function HomePage() {
 
   return (
     <div className="flex flex-col h-dvh">
-      {/* Header */}
       <header className="flex-shrink-0 flex items-center justify-between h-12 px-4 bg-card/80 backdrop-blur-md border-b border-border">
         <span className="text-base font-semibold">WebClaw</span>
         {messages.length > 0 && (
-          <button
-            onClick={handleClear}
-            className="text-text-secondary p-1.5"
-          >
+          <button onClick={handleClear} className="text-text-secondary p-1.5">
             <Trash2 size={16} />
           </button>
         )}
       </header>
 
-      {/* Chat Messages */}
       <div
         ref={listRef}
         className="flex-1 overflow-y-auto px-4 py-4 space-y-3 no-scrollbar"
@@ -314,9 +370,7 @@ export default function HomePage() {
         ))}
       </div>
 
-      {/* Bottom: Toolbar + Input */}
       <div className="flex-shrink-0 border-t border-border bg-card">
-        {/* Capsule Toolbar */}
         <div className="flex gap-2 px-4 pt-2 pb-1 overflow-x-auto no-scrollbar">
           {toolbarItems.map((item) => (
             <button
@@ -334,7 +388,6 @@ export default function HomePage() {
           ))}
         </div>
 
-        {/* Input */}
         <div className="flex items-end gap-2 px-4 py-2 pb-[calc(0.5rem+env(safe-area-inset-bottom))]">
           <textarea
             value={input}
@@ -342,7 +395,7 @@ export default function HomePage() {
             onKeyDown={(e) => {
               if (e.key === "Enter" && !e.shiftKey) {
                 e.preventDefault();
-                sendMessage();
+                handleSend();
               }
             }}
             placeholder="输入消息..."
@@ -350,11 +403,11 @@ export default function HomePage() {
             className="flex-1 resize-none rounded-xl bg-surface border border-border px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-primary/30 max-h-32"
           />
           <button
-            onClick={isStreaming ? handleStopAll : sendMessage}
-            disabled={!isStreaming && !input.trim()}
+            onClick={streaming ? handleStop : handleSend}
+            disabled={!streaming && !input.trim()}
             className="flex-shrink-0 w-10 h-10 rounded-full bg-primary text-white flex items-center justify-center disabled:opacity-40 active:scale-95 transition-transform"
           >
-            {isStreaming ? (
+            {streaming ? (
               <Square size={16} fill="currentColor" />
             ) : (
               <Send size={18} />
@@ -363,7 +416,6 @@ export default function HomePage() {
         </div>
       </div>
 
-      {/* Bottom Sheet Panels */}
       <BottomSheet
         open={activePanel !== null}
         onClose={() => setActivePanel(null)}

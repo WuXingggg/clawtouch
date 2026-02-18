@@ -106,10 +106,15 @@ export async function POST(request: NextRequest) {
           }
         } else if (p.state === "final") {
           const finalText = p.message ? extractText(p.message) : null;
-          send({
-            type: "done",
-            text: finalText || latestText || "(empty response)",
-          });
+          // Detect agent-busy: final with no content and no prior deltas
+          if (!finalText && !latestText && !gotDelta) {
+            send({ type: "error", error: "Agent 正在忙，请稍后重试" });
+          } else {
+            send({
+              type: "done",
+              text: finalText || latestText || "(empty response)",
+            });
+          }
           close();
         } else if (p.state === "aborted") {
           send({ type: "done", text: latestText || "(aborted)" });
