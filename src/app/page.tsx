@@ -4,7 +4,7 @@ import { useState, useRef, useEffect, useCallback } from "react";
 import useSWR from "swr";
 import {
   Send,
-  Loader2,
+  Square,
   Puzzle,
   BarChart3,
   Clock,
@@ -25,9 +25,16 @@ const fetcher = (url: string) => fetch(url).then((r) => r.json());
 interface Message {
   role: "user" | "assistant";
   content: string;
+  /** Unique id to track which placeholder to update */
+  id?: string;
 }
 
 type PanelType = "tokens" | "skills" | "cron" | "settings" | null;
+
+let msgIdCounter = 0;
+function nextMsgId() {
+  return `msg-${++msgIdCounter}`;
+}
 
 export default function HomePage() {
   // Gateway status
@@ -50,34 +57,43 @@ export default function HomePage() {
     }
     return "";
   });
-  const [loading, setLoading] = useState(false);
+  // Track number of active streams (allows concurrent sends)
+  const [activeStreams, setActiveStreams] = useState(0);
   const listRef = useRef<HTMLDivElement>(null);
+  // Track all active abort controllers
+  const abortsRef = useRef<Set<AbortController>>(new Set());
 
   // Panel state
   const [activePanel, setActivePanel] = useState<PanelType>(null);
 
-  // Persist chat & input, and clean up stale empty placeholders on load
+  // Persist chat & input
   useEffect(() => {
     localStorage.setItem("webclaw-chat", JSON.stringify(messages));
   }, [messages]);
 
-  // On mount: remove trailing empty assistant placeholder (from interrupted requests)
+  // On mount: remove trailing empty assistant placeholders (from interrupted requests)
   useEffect(() => {
     setMessages((prev) => {
-      if (prev.length > 0) {
-        const last = prev[prev.length - 1];
-        if (last.role === "assistant" && !last.content) {
-          return prev.slice(0, -1);
-        }
-      }
-      return prev;
+      const cleaned = prev.filter(
+        (m, i) =>
+          !(m.role === "assistant" && !m.content && i === prev.length - 1)
+      );
+      return cleaned.length !== prev.length ? cleaned : prev;
     });
+  }, []);
+
+  // Clean up on unmount
+  useEffect(() => {
+    return () => {
+      for (const ac of abortsRef.current) ac.abort();
+    };
   }, []);
 
   useEffect(() => {
     sessionStorage.setItem("webclaw-input", input);
   }, [input]);
 
+  // Auto-scroll on new messages
   useEffect(() => {
     if (listRef.current) {
       listRef.current.scrollTop = listRef.current.scrollHeight;
@@ -86,73 +102,111 @@ export default function HomePage() {
 
   const sendMessage = useCallback(async () => {
     const text = input.trim();
-    if (!text || loading) return;
+    if (!text) return;
 
-    const userMsg: Message = { role: "user", content: text };
-    const newMessages = [...messages, userMsg];
-    setMessages(newMessages);
     setInput("");
-    setLoading(true);
 
-    // Show loading placeholder
-    setMessages((prev) => [...prev, { role: "assistant", content: "" }]);
+    // Create unique id for this assistant response placeholder
+    const placeholderId = nextMsgId();
+
+    // Add user message + assistant placeholder
+    setMessages((prev) => [
+      ...prev,
+      { role: "user", content: text },
+      { role: "assistant", content: "", id: placeholderId },
+    ]);
+
+    setActiveStreams((n) => n + 1);
+
+    const abortController = new AbortController();
+    abortsRef.current.add(abortController);
+
+    // Helper: update only this placeholder by id
+    const updatePlaceholder = (content: string) => {
+      setMessages((prev) =>
+        prev.map((m) =>
+          m.id === placeholderId ? { ...m, content } : m
+        )
+      );
+    };
 
     try {
       const res = await fetch("/api/chat", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ messages: newMessages }),
+        body: JSON.stringify({
+          messages: [{ role: "user", content: text }],
+        }),
+        signal: abortController.signal,
       });
 
-      let data: Record<string, unknown>;
-      try {
-        data = await res.json();
-      } catch {
-        throw new Error(`服务器返回异常 (${res.status})`);
-      }
-
+      // Validation errors return JSON, not SSE
       if (!res.ok) {
-        const err = new Error(
-          (data.error as string) || `Error: ${res.status}`
-        );
-        (err as Error & { status: number }).status = res.status;
-        throw err;
+        let errMsg = `Error: ${res.status}`;
+        try {
+          const errData = await res.json();
+          errMsg = errData.error || errMsg;
+        } catch {
+          /* use default */
+        }
+        throw new Error(errMsg);
       }
 
-      const content = (data.content as string) || "(empty)";
-      console.log("[webclaw] response:", content.substring(0, 100));
-      setMessages((prev) => {
-        const updated = [...prev];
-        updated[updated.length - 1] = {
-          role: "assistant",
-          content,
-        };
-        return updated;
-      });
+      // Read SSE stream
+      const reader = res.body!.getReader();
+      const decoder = new TextDecoder();
+      let buffer = "";
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+
+        buffer += decoder.decode(value, { stream: true });
+
+        // Process complete SSE events (separated by \n\n)
+        const parts = buffer.split("\n\n");
+        buffer = parts.pop() || "";
+
+        for (const part of parts) {
+          const line = part.trim();
+          if (!line.startsWith("data: ")) continue;
+
+          let event: Record<string, unknown>;
+          try {
+            event = JSON.parse(line.slice(6));
+          } catch {
+            continue;
+          }
+
+          if (event.type === "delta" || event.type === "done") {
+            updatePlaceholder((event.text as string) || "");
+          } else if (event.type === "error") {
+            throw new Error(event.error as string);
+          }
+        }
+      }
     } catch (err) {
-      const e = err as Error & { status?: number };
-      const msg = e?.message || String(err);
+      if ((err as Error).name === "AbortError") return;
+      const msg = (err as Error)?.message || String(err);
       console.error("[webclaw] chat error:", msg);
-      const isBusy = e?.status === 503 || msg.includes("正在处理");
-      setMessages((prev) => {
-        const updated = [...prev];
-        updated[updated.length - 1] = {
-          role: "assistant",
-          content: isBusy
-            ? "Agent 正在忙，请稍后再试"
-            : `连接失败: ${msg}`,
-        };
-        return updated;
-      });
+      updatePlaceholder(`连接失败: ${msg}`);
     } finally {
-      setLoading(false);
+      setActiveStreams((n) => n - 1);
+      abortsRef.current.delete(abortController);
     }
-  }, [input, loading, messages]);
+  }, [input]);
+
+  const handleStopAll = useCallback(() => {
+    for (const ac of abortsRef.current) ac.abort();
+  }, []);
 
   const handleClear = () => {
+    handleStopAll();
     setMessages([]);
     localStorage.removeItem("webclaw-chat");
   };
+
+  const isStreaming = activeStreams > 0;
 
   const toolbarItems = [
     {
@@ -165,10 +219,30 @@ export default function HomePage() {
       label: isOnline ? "在线" : "离线",
       panel: "settings" as PanelType,
     },
-    { key: "skills", icon: <Puzzle size={14} />, label: "技能", panel: "skills" as PanelType },
-    { key: "tokens", icon: <BarChart3 size={14} />, label: "Token", panel: "tokens" as PanelType },
-    { key: "cron", icon: <Clock size={14} />, label: "定时任务", panel: "cron" as PanelType },
-    { key: "settings", icon: <Settings size={14} />, label: "设置", panel: "settings" as PanelType },
+    {
+      key: "skills",
+      icon: <Puzzle size={14} />,
+      label: "技能",
+      panel: "skills" as PanelType,
+    },
+    {
+      key: "tokens",
+      icon: <BarChart3 size={14} />,
+      label: "Token",
+      panel: "tokens" as PanelType,
+    },
+    {
+      key: "cron",
+      icon: <Clock size={14} />,
+      label: "定时任务",
+      panel: "cron" as PanelType,
+    },
+    {
+      key: "settings",
+      icon: <Settings size={14} />,
+      label: "设置",
+      panel: "settings" as PanelType,
+    },
   ];
 
   const panelTitles: Record<string, string> = {
@@ -184,7 +258,10 @@ export default function HomePage() {
       <header className="flex-shrink-0 flex items-center justify-between h-12 px-4 bg-card/80 backdrop-blur-md border-b border-border">
         <span className="text-base font-semibold">WebClaw</span>
         {messages.length > 0 && (
-          <button onClick={handleClear} className="text-text-secondary p-1.5">
+          <button
+            onClick={handleClear}
+            className="text-text-secondary p-1.5"
+          >
             <Trash2 size={16} />
           </button>
         )}
@@ -207,7 +284,7 @@ export default function HomePage() {
 
         {messages.map((msg, i) => (
           <div
-            key={i}
+            key={msg.id || i}
             className={`flex ${msg.role === "user" ? "justify-end" : "justify-start"}`}
           >
             <div
@@ -223,8 +300,12 @@ export default function HomePage() {
                 ) : (
                   msg.content
                 )
-              ) : loading && i === messages.length - 1 ? (
-                <Loader2 size={14} className="animate-spin text-text-secondary" />
+              ) : msg.role === "assistant" && msg.id ? (
+                <span className="thinking-dots text-text-secondary">
+                  <span>.</span>
+                  <span>.</span>
+                  <span>.</span>
+                </span>
               ) : (
                 ""
               )}
@@ -269,12 +350,12 @@ export default function HomePage() {
             className="flex-1 resize-none rounded-xl bg-surface border border-border px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-primary/30 max-h-32"
           />
           <button
-            onClick={sendMessage}
-            disabled={!input.trim() || loading}
+            onClick={isStreaming ? handleStopAll : sendMessage}
+            disabled={!isStreaming && !input.trim()}
             className="flex-shrink-0 w-10 h-10 rounded-full bg-primary text-white flex items-center justify-center disabled:opacity-40 active:scale-95 transition-transform"
           >
-            {loading ? (
-              <Loader2 size={18} className="animate-spin" />
+            {isStreaming ? (
+              <Square size={16} fill="currentColor" />
             ) : (
               <Send size={18} />
             )}
