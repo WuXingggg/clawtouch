@@ -1,6 +1,6 @@
 import { runOpenClaw } from "./openclaw";
 import { execFile } from "child_process";
-import { readdir } from "fs/promises";
+import { readdir, readFile } from "fs/promises";
 import { homedir } from "os";
 import { join } from "path";
 
@@ -18,6 +18,7 @@ export interface Skill {
   eligible: boolean;   // has all dependencies
   disabled: boolean;   // user explicitly disabled
   source: string;
+  slug?: string;       // ClawHub slug (for managed/installed skills)
   userInvocable: boolean;
   missing: SkillMissing;
 }
@@ -104,6 +105,28 @@ export async function installedHubSlugs(): Promise<string[]> {
   } catch {
     return [];
   }
+}
+
+/** Build mapping: openclaw skill name → ClawHub slug by reading SKILL.md name: field */
+export async function buildNameToSlugMap(): Promise<Record<string, string>> {
+  const map: Record<string, string> = {};
+  try {
+    const dir = join(homedir(), ".openclaw", "skills");
+    const entries = await readdir(dir, { withFileTypes: true });
+    await Promise.all(
+      entries.filter((e) => e.isDirectory()).map(async (e) => {
+        const slug = e.name;
+        try {
+          const skillMd = await readFile(join(dir, slug, "SKILL.md"), "utf-8");
+          const nameMatch = skillMd.match(/^name:\s*(.+)/m);
+          if (nameMatch) {
+            map[nameMatch[1].trim()] = slug;
+          }
+        } catch { /* no SKILL.md, skip */ }
+      })
+    );
+  } catch { /* skills dir doesn't exist */ }
+  return map;
 }
 
 export async function toggleSkill(

@@ -5,7 +5,7 @@ import useSWR from "swr";
 import { Card } from "@/components/ui/Card";
 import { Toggle } from "@/components/ui/Toggle";
 import { Badge } from "@/components/ui/Badge";
-import { ChevronDown, Star, Download, Search } from "lucide-react";
+import { ChevronDown, Star, Download, Search, X } from "lucide-react";
 
 const fetcher = (url: string) => fetch(url).then((r) => r.json());
 
@@ -22,6 +22,7 @@ interface Skill {
   enabled: boolean;
   eligible: boolean;
   disabled: boolean;
+  source: string;
   userInvocable: boolean;
   missing: SkillMissing;
 }
@@ -201,13 +202,40 @@ function Section({
   );
 }
 
-function zhDesc(name: string, fallback: string): string {
-  return LOCAL_ZH[name] || fallback;
+// Build slug → {name, desc} lookup from ClawHub list
+const HUB_ZH: Record<string, { name: string; desc: string }> = {};
+for (const h of CLAWHUB_SKILLS) {
+  HUB_ZH[h.slug] = { name: h.name, desc: h.desc };
+}
+
+function zhName(skillName: string, slug?: string): string {
+  if (slug && HUB_ZH[slug]) return HUB_ZH[slug].name;
+  if (HUB_ZH[skillName]) return HUB_ZH[skillName].name;
+  return skillName;
+}
+
+function zhDesc(name: string, fallback: string, slug?: string): string {
+  if (slug && HUB_ZH[slug]) return HUB_ZH[slug].desc;
+  if (LOCAL_ZH[name]) return LOCAL_ZH[name];
+  if (HUB_ZH[name]) return HUB_ZH[name].desc;
+  return fallback;
 }
 
 interface SkillsResponse {
   skills: Skill[];
   hubSlugs: string[];
+  slugMap: Record<string, string>; // openclaw name → clawhub slug
+}
+
+// Detail modal for skill info
+interface DetailTarget {
+  name: string;
+  desc: string;
+  slug?: string;
+  source?: string;
+  enabled?: boolean;
+  eligible?: boolean;
+  missing?: SkillMissing;
 }
 
 export function SkillsPanel() {
@@ -217,10 +245,12 @@ export function SkillsPanel() {
   const [installing, setInstalling] = useState<string | null>(null);
   const [installError, setInstallError] = useState<string | null>(null);
   const [justInstalled, setJustInstalled] = useState<Set<string>>(new Set());
+  const [detail, setDetail] = useState<DetailTarget | null>(null);
   const loading = data === undefined;
 
   const allSkills = data?.skills || [];
   const serverHubSlugs = data?.hubSlugs || [];
+  const slugMap = data?.slugMap || {};
   const enabled = allSkills.filter((s) => s.enabled);
   // eligible but user-disabled → can toggle on
   // not eligible → missing deps, show as unavailable
@@ -228,14 +258,23 @@ export function SkillsPanel() {
   const unavailable = allSkills.filter((s) => !s.enabled && !s.eligible);
   const disabled = [...canEnable, ...unavailable];
 
-  // Filter by search
+  // Helper to get slug for a skill
+  const getSlug = (name: string) => slugMap[name];
+
+  // Filter by search (match Chinese name/desc too)
   const match = (text: string) =>
     text.toLowerCase().includes(search.toLowerCase());
   const filteredEnabled = search
-    ? enabled.filter((s) => match(s.name) || match(zhDesc(s.name, s.description)))
+    ? enabled.filter((s) => {
+        const slug = getSlug(s.name);
+        return match(s.name) || match(zhName(s.name, slug)) || match(zhDesc(s.name, s.description, slug));
+      })
     : enabled;
   const filteredDisabled = search
-    ? disabled.filter((s) => match(s.name) || match(zhDesc(s.name, s.description)))
+    ? disabled.filter((s) => {
+        const slug = getSlug(s.name);
+        return match(s.name) || match(zhName(s.name, slug)) || match(zhDesc(s.name, s.description, slug));
+      })
     : disabled;
 
   // Filter ClawHub skills: exclude already installed (by slug from fs scan) + search
@@ -306,23 +345,31 @@ export function SkillsPanel() {
         title="已启用"
         badge={<Badge variant="success">{filteredEnabled.length}</Badge>}
       >
-        {filteredEnabled.map((skill) => (
-          <Card key={skill.name} className="!p-3">
-            <div className="flex items-center justify-between gap-2">
-              <div className="flex-1 min-w-0">
-                <span className="text-sm font-medium">{skill.name}</span>
-                <p className="text-[11px] text-text-secondary truncate mt-0.5">
-                  {zhDesc(skill.name, skill.description)}
-                </p>
+        {filteredEnabled.map((skill) => {
+          const slug = getSlug(skill.name);
+          const displayName = zhName(skill.name, slug);
+          const displayDesc = zhDesc(skill.name, skill.description, slug);
+          return (
+            <Card key={skill.name} className="!p-3">
+              <div className="flex items-center justify-between gap-2">
+                <div
+                  className="flex-1 min-w-0 cursor-pointer"
+                  onClick={() => setDetail({ name: displayName, desc: displayDesc, slug, source: skill.source, enabled: skill.enabled, eligible: skill.eligible, missing: skill.missing })}
+                >
+                  <span className="text-sm font-medium">{displayName}</span>
+                  <p className="text-[11px] text-text-secondary truncate mt-0.5">
+                    {displayDesc}
+                  </p>
+                </div>
+                <Toggle
+                  checked
+                  onChange={() => handleToggle(skill.name, false)}
+                  disabled={toggling === skill.name}
+                />
               </div>
-              <Toggle
-                checked
-                onChange={() => handleToggle(skill.name, false)}
-                disabled={toggling === skill.name}
-              />
-            </div>
-          </Card>
-        ))}
+            </Card>
+          );
+        })}
         {filteredEnabled.length === 0 && (
           <p className="text-xs text-text-secondary text-center py-2">无匹配</p>
         )}
@@ -334,6 +381,9 @@ export function SkillsPanel() {
         badge={<Badge variant="default">{filteredDisabled.length}</Badge>}
       >
         {filteredDisabled.map((skill) => {
+          const slug = getSlug(skill.name);
+          const displayName = zhName(skill.name, slug);
+          const displayDesc = zhDesc(skill.name, skill.description, slug);
           const m = skill.missing;
           const hasOsBlock = m.os.length > 0;
           const missingBins = m.bins;
@@ -342,10 +392,13 @@ export function SkillsPanel() {
           return (
             <Card key={skill.name} className="!p-3">
               <div className="flex items-center justify-between gap-2">
-                <div className="flex-1 min-w-0">
-                  <span className="text-sm font-medium">{skill.name}</span>
+                <div
+                  className="flex-1 min-w-0 cursor-pointer"
+                  onClick={() => setDetail({ name: displayName, desc: displayDesc, slug, source: skill.source, enabled: skill.enabled, eligible: skill.eligible, missing: skill.missing })}
+                >
+                  <span className="text-sm font-medium">{displayName}</span>
                   <p className="text-[11px] text-text-secondary truncate mt-0.5">
-                    {zhDesc(skill.name, skill.description)}
+                    {displayDesc}
                   </p>
                   {!skill.eligible && (
                     <div className="flex flex-wrap gap-1 mt-1">
@@ -403,7 +456,10 @@ export function SkillsPanel() {
         {filteredHub.map((h) => (
           <Card key={h.slug} className="!p-3">
             <div className="flex items-start justify-between gap-2">
-              <div className="flex-1 min-w-0">
+              <div
+                className="flex-1 min-w-0 cursor-pointer"
+                onClick={() => setDetail({ name: h.name, desc: h.desc, slug: h.slug })}
+              >
                 <div className="flex items-center gap-2">
                   <span className="text-sm font-medium">{h.name}</span>
                   <div className="flex items-center gap-2 text-[11px] text-text-secondary">
@@ -437,6 +493,74 @@ export function SkillsPanel() {
           <p className="text-xs text-text-secondary text-center py-2">无匹配</p>
         )}
       </Section>
+
+      {/* Skill detail overlay */}
+      {detail && (
+        <div
+          className="fixed inset-0 z-[60] flex items-end justify-center"
+          onClick={() => setDetail(null)}
+        >
+          <div className="absolute inset-0 bg-black/30" />
+          <div
+            className="relative bg-surface rounded-t-2xl w-full max-h-[60vh] overflow-y-auto animate-slide-up"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="sticky top-0 bg-surface pt-3 pb-2 px-4 border-b border-border">
+              <div className="w-10 h-1 rounded-full bg-slate-300 mx-auto mb-3" />
+              <div className="flex items-center justify-between">
+                <h3 className="text-base font-semibold">{detail.name}</h3>
+                <button
+                  onClick={() => setDetail(null)}
+                  className="w-7 h-7 rounded-full bg-slate-100 flex items-center justify-center"
+                >
+                  <X size={14} className="text-text-secondary" />
+                </button>
+              </div>
+            </div>
+            <div className="px-4 py-3 space-y-3">
+              <p className="text-sm text-text-secondary leading-relaxed">{detail.desc}</p>
+              {detail.slug && (
+                <div className="flex items-center gap-1.5 text-xs text-text-secondary">
+                  <span className="px-2 py-0.5 rounded bg-slate-100">slug: {detail.slug}</span>
+                </div>
+              )}
+              {detail.source && (
+                <div className="text-xs text-text-secondary">
+                  来源: {detail.source === "openclaw-managed" ? "ClawHub 市场" :
+                         detail.source === "openclaw-bundled" ? "内置技能" :
+                         detail.source === "openclaw-extra" ? "扩展技能" :
+                         detail.source === "user" ? "用户自定义" : detail.source}
+                </div>
+              )}
+              {detail.enabled !== undefined && (
+                <div className="text-xs">
+                  状态:{" "}
+                  <Badge variant={detail.enabled ? "success" : "default"}>
+                    {detail.enabled ? "已启用" : detail.eligible === false ? "缺依赖" : "未启用"}
+                  </Badge>
+                </div>
+              )}
+              {detail.missing && !detail.eligible && (
+                <div className="space-y-1.5">
+                  <p className="text-xs font-medium">缺少依赖:</p>
+                  {detail.missing.os.length > 0 && (
+                    <p className="text-xs text-red-600">需要操作系统: {detail.missing.os.join(", ")}</p>
+                  )}
+                  {detail.missing.bins.length > 0 && (
+                    <p className="text-xs text-amber-700">缺少命令行工具: {detail.missing.bins.join(", ")}</p>
+                  )}
+                  {detail.missing.env.length > 0 && (
+                    <p className="text-xs text-blue-600">需要环境变量: {detail.missing.env.join(", ")}</p>
+                  )}
+                  {detail.missing.config.length > 0 && (
+                    <p className="text-xs text-purple-600">缺少配置项: {detail.missing.config.join(", ")}</p>
+                  )}
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
