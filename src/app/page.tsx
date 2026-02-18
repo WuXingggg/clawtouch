@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useRef, useEffect, useCallback } from "react";
-import useSWR from "swr";
+import useSWR, { useSWRConfig } from "swr";
 import {
   Send,
   Square,
@@ -19,6 +19,7 @@ import {
   File,
   Camera,
   X,
+  RefreshCw,
 } from "lucide-react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
@@ -27,6 +28,7 @@ import { TokenPanel } from "@/components/panels/TokenPanel";
 import { SkillsPanel } from "@/components/panels/SkillsPanel";
 import { CronPanel } from "@/components/panels/CronPanel";
 import { SettingsPanel } from "@/components/panels/SettingsPanel";
+import { getSettings } from "@/lib/settings";
 
 const fetcher = (url: string) => fetch(url).then((r) => r.json());
 
@@ -99,7 +101,10 @@ function getGwFallback() {
   }
 }
 
+const FILE_UPLOAD_LIMIT_MB = 10;
+
 export default function HomePage() {
+  const { mutate } = useSWRConfig();
   const { data: gateway } = useSWR("/api/gateway", gwFetcher, {
     refreshInterval: 10000,
     dedupingInterval: 5000,
@@ -113,7 +118,11 @@ export default function HomePage() {
   const [messages, setMessages] = useState<Message[]>(() => {
     if (typeof window !== "undefined") {
       const saved = localStorage.getItem("webclaw-chat");
-      return saved ? JSON.parse(saved) : [];
+      if (saved) {
+        const parsed = JSON.parse(saved) as Message[];
+        const limit = getSettings().chatHistoryLimit;
+        return parsed.length > limit ? parsed.slice(-limit) : parsed;
+      }
     }
     return [];
   });
@@ -146,9 +155,23 @@ export default function HomePage() {
   const [isRecording, setIsRecording] = useState(false);
   const recognitionRef = useRef<SpeechRecognition | null>(null);
 
-  // Persist
+  // Clear confirmation
+  const [confirmClear, setConfirmClear] = useState(false);
+  const confirmClearTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // Textarea auto-grow
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
+
+  // Pull-to-refresh
+  const [pullRefreshing, setPullRefreshing] = useState(false);
+  const pullStartY = useRef<number | null>(null);
+  const [pullDistance, setPullDistance] = useState(0);
+
+  // Persist (with history limit)
   useEffect(() => {
-    localStorage.setItem("webclaw-chat", JSON.stringify(messages));
+    const limit = getSettings().chatHistoryLimit;
+    const toSave = messages.length > limit ? messages.slice(-limit) : messages;
+    localStorage.setItem("webclaw-chat", JSON.stringify(toSave));
   }, [messages]);
 
   useEffect(() => {
@@ -472,6 +495,7 @@ export default function HomePage() {
     if (attachments.length > 0) setAttachments([]);
     if (!message) return;
     setInput("");
+    resetTextarea();
     enqueueMessage(message, imageAtts.length > 0 ? imageAtts : undefined);
 
     // Flush immediately
@@ -501,7 +525,16 @@ export default function HomePage() {
     abortRef.current?.abort();
   }, []);
 
-  const handleClear = () => {
+  const handleClearClick = useCallback(() => {
+    if (!confirmClear) {
+      setConfirmClear(true);
+      if (confirmClearTimerRef.current) clearTimeout(confirmClearTimerRef.current);
+      confirmClearTimerRef.current = setTimeout(() => setConfirmClear(false), 3000);
+      return;
+    }
+    // Confirmed — actually clear
+    setConfirmClear(false);
+    if (confirmClearTimerRef.current) clearTimeout(confirmClearTimerRef.current);
     abortRef.current?.abort();
     abortRef.current = null;
     if (debounceRef.current) clearTimeout(debounceRef.current);
@@ -512,7 +545,7 @@ export default function HomePage() {
     setStreaming(false);
     setMessages([]);
     localStorage.removeItem("webclaw-chat");
-  };
+  }, [confirmClear]);
 
   // Attachment handling
   const handleFiles = useCallback(async (files: FileList | null) => {
@@ -520,9 +553,9 @@ export default function HomePage() {
     setShowAttachMenu(false);
     for (const file of Array.from(files)) {
       const isImage = file.type.startsWith("image/");
-      if (isImage && file.size > 5 * 1024 * 1024) {
+      if (isImage && file.size > FILE_UPLOAD_LIMIT_MB * 1024 * 1024) {
         setAttachments((prev) => [...prev, {
-          name: `[超过5MB] ${file.name}`, url: "", isImage: false,
+          name: `[超过${FILE_UPLOAD_LIMIT_MB}MB] ${file.name}`, url: "", isImage: false,
         }]);
         continue;
       }
@@ -605,6 +638,53 @@ export default function HomePage() {
     setIsRecording(true);
   }, [isRecording]);
 
+  // Textarea auto-grow
+  const autoGrowTextarea = useCallback(() => {
+    const el = textareaRef.current;
+    if (!el) return;
+    el.style.height = "auto";
+    el.style.height = Math.min(el.scrollHeight, 144) + "px"; // max ~6 rows
+  }, []);
+
+  const resetTextarea = useCallback(() => {
+    const el = textareaRef.current;
+    if (!el) return;
+    el.style.height = "auto";
+  }, []);
+
+  // Pull-to-refresh handlers
+  const handleTouchStart = useCallback((e: React.TouchEvent) => {
+    const el = listRef.current;
+    if (el && el.scrollTop <= 0) {
+      pullStartY.current = e.touches[0].clientY;
+    } else {
+      pullStartY.current = null;
+    }
+  }, []);
+
+  const handleTouchMove = useCallback((e: React.TouchEvent) => {
+    if (pullStartY.current === null || pullRefreshing) return;
+    const dy = e.touches[0].clientY - pullStartY.current;
+    if (dy > 0) {
+      setPullDistance(Math.min(dy * 0.5, 80));
+    }
+  }, [pullRefreshing]);
+
+  const handleTouchEnd = useCallback(() => {
+    if (pullDistance > 50 && !pullRefreshing) {
+      setPullRefreshing(true);
+      setPullDistance(50);
+      // Refresh gateway status
+      mutate("/api/gateway").finally(() => {
+        setPullRefreshing(false);
+        setPullDistance(0);
+      });
+    } else {
+      setPullDistance(0);
+    }
+    pullStartY.current = null;
+  }, [pullDistance, pullRefreshing, mutate]);
+
   const toolbarItems = [
     {
       key: "status" as const,
@@ -656,16 +736,42 @@ export default function HomePage() {
       <header className="flex-shrink-0 flex items-center justify-between h-12 px-4 bg-card/80 backdrop-blur-md border-b border-border">
         <span className="text-base font-semibold">WebClaw</span>
         {messages.length > 0 && (
-          <button onClick={handleClear} className="text-text-secondary p-1.5">
-            <Trash2 size={16} />
-          </button>
+          confirmClear ? (
+            <button
+              onClick={handleClearClick}
+              className="text-xs px-2 py-1 rounded-lg bg-red-500 text-white animate-pulse"
+            >
+              确认清除?
+            </button>
+          ) : (
+            <button onClick={handleClearClick} className="text-text-secondary p-1.5">
+              <Trash2 size={16} />
+            </button>
+          )
         )}
       </header>
 
       <div
         ref={listRef}
         className="flex-1 overflow-y-auto px-4 py-4 space-y-3 no-scrollbar"
+        onTouchStart={handleTouchStart}
+        onTouchMove={handleTouchMove}
+        onTouchEnd={handleTouchEnd}
       >
+        {/* Pull-to-refresh indicator */}
+        {pullDistance > 0 && (
+          <div
+            className="flex justify-center items-center transition-all"
+            style={{ height: pullDistance, marginTop: -8 }}
+          >
+            <RefreshCw
+              size={18}
+              className={`text-text-secondary transition-transform ${pullRefreshing ? "animate-spin" : ""}`}
+              style={{ transform: `rotate(${pullDistance * 3.6}deg)` }}
+            />
+          </div>
+        )}
+
         {messages.length === 0 && (
           <div className="flex flex-col items-center justify-center h-full text-text-secondary">
             <p className="text-4xl mb-3">🦞</p>
@@ -856,8 +962,12 @@ export default function HomePage() {
           </button>
 
           <textarea
+            ref={textareaRef}
             value={input}
-            onChange={(e) => setInput(e.target.value)}
+            onChange={(e) => {
+              setInput(e.target.value);
+              autoGrowTextarea();
+            }}
             onKeyDown={(e) => {
               if (e.key === "Enter" && !e.shiftKey) {
                 e.preventDefault();
@@ -867,9 +977,10 @@ export default function HomePage() {
             placeholder={isRecording ? "正在听..." : "输入消息..."}
             rows={1}
             autoComplete="off"
-            className={`flex-1 resize-none rounded-xl bg-surface border px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-primary/30 max-h-32 ${
+            className={`flex-1 resize-none rounded-xl bg-surface border px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-primary/30 ${
               isRecording ? "border-red-400 ring-2 ring-red-400/30" : "border-border"
             }`}
+            style={{ maxHeight: 144 }}
           />
 
           {/* Voice / Send button */}

@@ -17,10 +17,10 @@ export async function POST(request: NextRequest) {
     const mimeType = file.type || "";
     const isImage = mimeType.startsWith("image/");
 
-    // 5MB limit for images (gateway constraint)
-    if (isImage && file.size > 5 * 1024 * 1024) {
+    // 10MB limit for images
+    if (isImage && file.size > 10 * 1024 * 1024) {
       return NextResponse.json(
-        { error: `图片过大 (${(file.size / 1024 / 1024).toFixed(1)}MB，最大 5MB)` },
+        { error: `图片过大 (${(file.size / 1024 / 1024).toFixed(1)}MB，最大 10MB)` },
         { status: 400 },
       );
     }

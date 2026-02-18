@@ -23,6 +23,23 @@ export async function GET() {
     }
   }
 
+  // Read current model from agents.defaults.model.primary
+  const agents = (config.agents as Record<string, unknown>) || {};
+  const defaults = (agents.defaults as Record<string, unknown>) || {};
+  const modelConfig = (defaults.model as Record<string, unknown>) || {};
+  const currentModel = (modelConfig.primary as string) || "";
+
+  // Build flat model list for dropdown
+  const allModels: Array<{ provider: string; id: string; name: string; fullId: string }> = [];
+  for (const [provName, provConfig] of Object.entries(rawProviders)) {
+    const models = (provConfig.models as Array<Record<string, unknown>>) || [];
+    for (const m of models) {
+      const id = String(m.id || m.name || "");
+      const name = String(m.name || m.id || "");
+      allModels.push({ provider: provName, id, name, fullId: `${provName}/${id}` });
+    }
+  }
+
   return NextResponse.json({
     configStatus: {
       loaded: exists,
@@ -31,14 +48,32 @@ export async function GET() {
       path: configPath,
     },
     providers,
+    currentModel,
+    allModels,
   });
 }
 
 export async function PATCH(request: NextRequest) {
   try {
-    const { providers } = await request.json();
+    const body = await request.json();
     const config = await readConfig();
-    config.providers = providers;
+
+    // Support model switching: { model: "openrouter/minimax/minimax-m2.5" }
+    if (body.model !== undefined) {
+      const agents = (config.agents as Record<string, unknown>) || {};
+      const defaults = (agents.defaults as Record<string, unknown>) || {};
+      const modelConfig = (defaults.model as Record<string, unknown>) || {};
+      modelConfig.primary = body.model;
+      defaults.model = modelConfig;
+      agents.defaults = defaults;
+      config.agents = agents;
+    }
+
+    // Support provider updates: { providers: {...} }
+    if (body.providers) {
+      config.providers = body.providers;
+    }
+
     await writeConfig(config);
     return NextResponse.json({ ok: true });
   } catch (e) {

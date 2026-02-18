@@ -22,7 +22,7 @@ interface TokenStats {
     cacheWrite: number;
     all: number;
   };
-  today: { tokens: number; date: string };
+  today: { tokens: number; inputTokens: number; outputTokens: number; date: string };
   daily: TokenEntry[];
 }
 
@@ -124,6 +124,8 @@ export async function getTokenStats(days: number = 30): Promise<TokenStats> {
           todayEntry.cacheReadTokens +
           todayEntry.cacheWriteTokens
         : 0,
+      inputTokens: todayEntry?.inputTokens || 0,
+      outputTokens: todayEntry?.outputTokens || 0,
       date: todayKey,
     },
     daily,

@@ -4,6 +4,7 @@ import { useState } from "react";
 import useSWR from "swr";
 import { Card } from "@/components/ui/Card";
 import { TrendChart } from "@/components/tokens/TrendChart";
+import { estimateCost, formatCost } from "@/lib/pricing";
 
 const fetcher = (url: string) => fetch(url).then((r) => r.json());
 
@@ -45,9 +46,16 @@ export function TokenPanel() {
       {/* Summary */}
       <Card>
         <p className="text-xs text-text-secondary mb-1">总 Tokens</p>
-        <p className="text-2xl font-bold text-primary mb-3">
-          {fmt(data?.total?.all || 0)}
-        </p>
+        <div className="flex items-baseline gap-2 mb-3">
+          <p className="text-2xl font-bold text-primary">
+            {fmt(data?.total?.all || 0)}
+          </p>
+          {data?.total && (
+            <span className="text-xs text-text-secondary">
+              {formatCost(estimateCost(data.total.input || 0, data.total.output || 0))}
+            </span>
+          )}
+        </div>
         <div className="h-px bg-border mb-3" />
         <div className="grid grid-cols-2 gap-3">
           <div>
@@ -87,10 +95,27 @@ export function TokenPanel() {
           <span className="text-sm font-medium">今日使用</span>
           <span className="text-xs text-text-secondary">{data?.today?.date}</span>
         </div>
-        <p className="text-2xl font-bold text-primary mt-1">
-          {fmt(data?.today?.tokens || 0)}{" "}
-          <span className="text-xs font-normal text-text-secondary">tokens</span>
-        </p>
+        <div className="flex items-baseline gap-2 mt-1">
+          <p className="text-2xl font-bold text-primary">
+            {fmt(data?.today?.tokens || 0)}
+            <span className="text-xs font-normal text-text-secondary ml-1">tokens</span>
+          </p>
+          {data?.daily && (() => {
+            const todayKey = new Date().toISOString().slice(0, 10);
+            const todayDaily = (data.daily as Array<Record<string, number | string>>).find(
+              (d) => d.date === todayKey
+            );
+            if (!todayDaily) return null;
+            return (
+              <span className="text-xs text-text-secondary">
+                {formatCost(estimateCost(
+                  (todayDaily.inputTokens as number) || 0,
+                  (todayDaily.outputTokens as number) || 0,
+                ))}
+              </span>
+            );
+          })()}
+        </div>
       </Card>
 
       {/* Trend */}
