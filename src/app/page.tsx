@@ -94,7 +94,9 @@ export default function HomePage() {
       const data = await res.json();
 
       if (!res.ok) {
-        throw new Error(data.error || `Error: ${res.status}`);
+        const err = new Error(data.error || `Error: ${res.status}`);
+        (err as Error & { status: number }).status = res.status;
+        throw err;
       }
 
       setMessages((prev) => {
@@ -106,11 +108,15 @@ export default function HomePage() {
         return updated;
       });
     } catch (err) {
+      const e = err as Error & { status?: number };
+      const isBusy = e.status === 503 || e.message.includes("正在处理");
       setMessages((prev) => {
         const updated = [...prev];
         updated[updated.length - 1] = {
           role: "assistant",
-          content: `连接失败: ${(err as Error).message}`,
+          content: isBusy
+            ? "Agent 正在忙，请稍后再试"
+            : `连接失败: ${e.message}`,
         };
         return updated;
       });

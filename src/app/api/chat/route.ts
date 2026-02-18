@@ -3,18 +3,26 @@ import { connectToGateway } from "@/lib/gateway-ws";
 import { randomUUID } from "crypto";
 
 const SESSION_KEY = process.env.OPENCLAW_SESSION_KEY || "agent:main:main";
+const MAX_RETRIES = 3;
+const RETRY_DELAYS = [2000, 4000, 8000]; // ms
 
 export async function POST(request: NextRequest) {
   let body: { messages?: unknown[] };
   try {
     body = await request.json();
   } catch {
-    return NextResponse.json({ error: "Invalid request body" }, { status: 400 });
+    return NextResponse.json(
+      { error: "Invalid request body" },
+      { status: 400 }
+    );
   }
 
   const messages = body.messages;
   if (!Array.isArray(messages)) {
-    return NextResponse.json({ error: "Missing messages array" }, { status: 400 });
+    return NextResponse.json(
+      { error: "Missing messages array" },
+      { status: 400 }
+    );
   }
 
   const lastUserMsg = [...messages]
@@ -26,21 +34,62 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: "No user message" }, { status: 400 });
   }
 
-  try {
-    const gw = await connectToGateway();
-    const idempotencyKey = randomUUID();
+  // Retry loop: agent may be busy processing another request
+  for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
+    try {
+      const result = await sendChat(lastUserMsg.content);
 
-    const result = await new Promise<string>((resolve, reject) => {
+      if (result.busy && attempt < MAX_RETRIES) {
+        const delay = RETRY_DELAYS[attempt] || 8000;
+        console.log(
+          `[chat] agent busy, retry ${attempt + 1}/${MAX_RETRIES} in ${delay}ms`
+        );
+        await sleep(delay);
+        continue;
+      }
+
+      if (result.busy) {
+        return NextResponse.json(
+          { error: "Agent 正在处理其他请求，请稍后再试" },
+          { status: 503 }
+        );
+      }
+
+      return NextResponse.json({ content: result.text });
+    } catch (err) {
+      const errMsg = err instanceof Error ? err.message : String(err);
+      return NextResponse.json({ error: errMsg }, { status: 502 });
+    }
+  }
+
+  return NextResponse.json(
+    { error: "Agent 正在处理其他请求，请稍后再试" },
+    { status: 503 }
+  );
+}
+
+interface ChatResult {
+  text: string;
+  busy: boolean;
+}
+
+async function sendChat(message: string): Promise<ChatResult> {
+  const gw = await connectToGateway();
+  const idempotencyKey = randomUUID();
+
+  try {
+    return await new Promise<ChatResult>((resolve, reject) => {
       let latestText = "";
       let myRunId: string | null = null;
       let settled = false;
+      let gotDelta = false;
 
-      const finish = (text: string) => {
+      const finish = (text: string, busy = false) => {
         if (settled) return;
         settled = true;
         clearTimeout(timeout);
         gw.close();
-        resolve(text);
+        resolve({ text, busy });
       };
 
       const fail = (err: Error) => {
@@ -55,17 +104,30 @@ export async function POST(request: NextRequest) {
         finish(latestText || "(timeout)");
       }, 120000);
 
-      // Buffer events received before we know our runId
       const earlyEvents: Array<Record<string, unknown>> = [];
 
       const processEvent = (p: Record<string, unknown>) => {
         if (p.state === "delta" && p.message) {
+          gotDelta = true;
           const text = extractText(p.message);
           if (text) latestText = text;
         } else if (p.state === "final") {
           const finalText = p.message ? extractText(p.message) : null;
+
+          // Detect agent-busy: final with no message and no prior deltas
+          if (!finalText && !latestText && !gotDelta) {
+            console.log("[chat] agent busy: final with no content, no deltas");
+            finish("", true);
+            return;
+          }
+
           finish(finalText || latestText || "(empty response)");
         } else if (p.state === "aborted") {
+          // Aborted with no content also likely means busy
+          if (!latestText && !gotDelta) {
+            finish("", true);
+            return;
+          }
           finish(latestText || "(aborted)");
         } else if (p.state === "error") {
           fail(new Error((p.errorMessage as string) || "Chat error"));
@@ -80,8 +142,13 @@ export async function POST(request: NextRequest) {
         const eventRunId = p.runId as string | undefined;
 
         if (!myRunId) {
-          // Don't know our runId yet — buffer events (skip stale finals)
-          if ((p.state === "final" || p.state === "aborted") && !p.message) return;
+          // Skip stale finals/aborts without message before we know our runId
+          if (
+            (p.state === "final" || p.state === "aborted") &&
+            !p.message
+          ) {
+            return;
+          }
           earlyEvents.push(p);
           return;
         }
@@ -93,27 +160,26 @@ export async function POST(request: NextRequest) {
 
       gw.request("chat.send", {
         sessionKey: SESSION_KEY,
-        message: lastUserMsg.content,
+        message,
         deliver: false,
         idempotencyKey,
-      }).then((res) => {
-        const r = res as Record<string, unknown> | undefined;
-        if (r?.runId) {
-          myRunId = r.runId as string;
-          // Replay buffered events that match our runId
-          for (const evt of earlyEvents) {
-            const rid = evt.runId as string | undefined;
-            if (!rid || rid === myRunId) processEvent(evt);
+      })
+        .then((res) => {
+          const r = res as Record<string, unknown> | undefined;
+          if (r?.runId) {
+            myRunId = r.runId as string;
+            for (const evt of earlyEvents) {
+              const rid = evt.runId as string | undefined;
+              if (!rid || rid === myRunId) processEvent(evt);
+            }
+            earlyEvents.length = 0;
           }
-          earlyEvents.length = 0;
-        }
-      }).catch(fail);
+        })
+        .catch(fail);
     });
-
-    return NextResponse.json({ content: result });
   } catch (err) {
-    const errMsg = err instanceof Error ? err.message : String(err);
-    return NextResponse.json({ error: errMsg }, { status: 502 });
+    gw.close();
+    throw err;
   }
 }
 
@@ -138,4 +204,8 @@ function extractText(message: unknown): string | null {
 
   if (typeof msg.text === "string") return msg.text;
   return null;
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((r) => setTimeout(r, ms));
 }
