@@ -87,7 +87,7 @@ export async function POST(request: NextRequest) {
       const timeout = setTimeout(() => {
         send({ type: "done", text: latestText || "(timeout)" });
         close();
-      }, 120_000);
+      }, 300_000);
 
       // Send thinking indicator immediately
       send({ type: "thinking" });
@@ -127,6 +127,14 @@ export async function POST(request: NextRequest) {
           close();
         }
       };
+
+      // Handle unexpected WS close (e.g. agent takes too long for WS keepalive)
+      gw.onClose(() => {
+        if (!settled) {
+          send({ type: "done", text: latestText || "(连接断开)" });
+          close();
+        }
+      });
 
       gw.onEvent((event, payload) => {
         if (event !== "chat") return;

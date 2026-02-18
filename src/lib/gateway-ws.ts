@@ -76,6 +76,7 @@ export interface GatewayConnection {
     params: Record<string, unknown>
   ) => Promise<unknown>;
   onEvent: (handler: (event: string, payload: unknown) => void) => void;
+  onClose: (handler: () => void) => void;
   close: () => void;
 }
 
@@ -164,6 +165,9 @@ export function connectToGateway(): Promise<GatewayConnection> {
                   onEvent: (handler) => {
                     eventHandler = handler;
                   },
+                  onClose: (handler) => {
+                    closeHandler = handler;
+                  },
                   close: () => ws.close(),
                 });
               })
@@ -203,11 +207,14 @@ export function connectToGateway(): Promise<GatewayConnection> {
       if (!connected) reject(err);
     });
 
+    let closeHandler: (() => void) | null = null;
+
     ws.on("close", () => {
       for (const [, handler] of pending) {
         handler.reject(new Error("WebSocket closed"));
       }
       pending.clear();
+      closeHandler?.();
     });
 
     setTimeout(() => {
