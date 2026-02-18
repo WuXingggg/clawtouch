@@ -55,8 +55,7 @@ export async function listSkills(): Promise<Skill[]> {
   }
 }
 
-export async function installHubSkill(slug: string): Promise<{ ok: boolean; error?: string }> {
-  const workdir = join(homedir(), ".openclaw");
+function runClawHub(slug: string, workdir: string): Promise<{ ok: boolean; error?: string }> {
   return new Promise((resolve) => {
     execFile(
       "clawhub",
@@ -71,6 +70,26 @@ export async function installHubSkill(slug: string): Promise<{ ok: boolean; erro
       }
     );
   });
+}
+
+export async function installHubSkill(slug: string): Promise<{ ok: boolean; error?: string }> {
+  const workdir = join(homedir(), ".openclaw");
+  const delays = [0, 5_000, 10_000];
+  for (let i = 0; i < delays.length; i++) {
+    if (delays[i] > 0) await new Promise((r) => setTimeout(r, delays[i]));
+    const result = await runClawHub(slug, workdir);
+    if (result.ok) return result;
+    const isRateLimit = result.error?.toLowerCase().includes("rate limit");
+    if (!isRateLimit || i === delays.length - 1) {
+      return {
+        ok: false,
+        error: isRateLimit
+          ? "ClawHub 请求频率限制，请稍后再试"
+          : result.error,
+      };
+    }
+  }
+  return { ok: false, error: "安装失败" };
 }
 
 export async function toggleSkill(
