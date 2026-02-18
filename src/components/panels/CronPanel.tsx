@@ -34,6 +34,7 @@ function formatSchedule(s?: CronJob["schedule"]): string {
 
 export function CronPanel({ onSendMessage }: CronPanelProps) {
   const { data } = useSWR("/api/cron", fetcher);
+  const loading = data === undefined;
 
   const jobs: CronJob[] = Array.isArray(data) ? data : data?.jobs || [];
 
@@ -61,6 +62,14 @@ export function CronPanel({ onSendMessage }: CronPanelProps) {
     lines.push("", "请问你想修改哪些内容？");
     onSendMessage?.(lines.join("\n"));
   };
+
+  if (loading) {
+    return (
+      <div className="py-8 text-center text-sm text-text-secondary animate-pulse">
+        加载定时任务...
+      </div>
+    );
+  }
 
   return (
     <div className="space-y-3 py-3">

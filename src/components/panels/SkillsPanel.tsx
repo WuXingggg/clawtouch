@@ -211,6 +211,7 @@ export function SkillsPanel() {
   const [toggling, setToggling] = useState<string | null>(null);
   const [installing, setInstalling] = useState<string | null>(null);
   const [installError, setInstallError] = useState<string | null>(null);
+  const [installedSlugs, setInstalledSlugs] = useState<Set<string>>(new Set());
   const loading = skills === undefined;
 
   const allSkills = skills || [];
@@ -234,7 +235,7 @@ export function SkillsPanel() {
   // Filter ClawHub skills: exclude already installed + search
   const installedNames = new Set(allSkills.map((s) => s.name));
   const filteredHub = CLAWHUB_SKILLS.filter((h) => {
-    if (installedNames.has(h.slug)) return false;
+    if (installedNames.has(h.slug) || installedSlugs.has(h.slug)) return false;
     if (search && !match(h.name) && !match(h.desc) && !match(h.slug)) return false;
     return true;
   });
@@ -263,6 +264,7 @@ export function SkillsPanel() {
         const data = await res.json();
         setInstallError(data.error || "安装失败");
       } else {
+        setInstalledSlugs((prev) => new Set(prev).add(slug));
         await mutate();
       }
     } catch {

@@ -60,7 +60,7 @@ export async function installHubSkill(slug: string): Promise<{ ok: boolean; erro
   return new Promise((resolve) => {
     execFile(
       "clawhub",
-      ["install", slug, "--no-input", "--workdir", workdir],
+      ["install", slug, "--no-input", "--force", "--workdir", workdir],
       { timeout: 60_000, maxBuffer: 10 * 1024 * 1024 },
       (error, _stdout, stderr) => {
         if (error) {
