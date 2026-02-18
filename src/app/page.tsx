@@ -158,8 +158,9 @@ export default function HomePage() {
       const reader = res.body!.getReader();
       const decoder = new TextDecoder();
       let buffer = "";
+      let streamDone = false;
 
-      while (true) {
+      while (!streamDone) {
         const { done, value } = await reader.read();
         if (done) break;
 
@@ -178,8 +179,12 @@ export default function HomePage() {
             continue;
           }
 
-          if (event.type === "delta" || event.type === "done") {
+          if (event.type === "delta") {
             updatePlaceholder((event.text as string) || "");
+          } else if (event.type === "done") {
+            updatePlaceholder((event.text as string) || "");
+            streamDone = true;
+            break;
           } else if (event.type === "error") {
             throw new Error(event.error as string);
           }
