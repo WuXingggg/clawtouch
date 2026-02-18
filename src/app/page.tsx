@@ -52,9 +52,13 @@ function nextMsgId() {
  */
 export default function HomePage() {
   const { data: gateway } = useSWR("/api/gateway", fetcher, {
-    refreshInterval: 15000,
+    refreshInterval: 10000,
+    dedupingInterval: 5000,
+    errorRetryCount: 3,
+    errorRetryInterval: 3000,
   });
   const isOnline = gateway?.online;
+  const gatewayLoading = gateway === undefined;
 
   const [messages, setMessages] = useState<Message[]>(() => {
     if (typeof window !== "undefined") {
@@ -152,7 +156,13 @@ export default function HomePage() {
       );
     };
 
-    try {
+    const isRetryableError = (msg: string) =>
+      /连接失败|Gateway|WebSocket|timeout|ECONNREFUSED|fetch failed/i.test(msg);
+
+    const MAX_CLIENT_RETRIES = 1;
+    let clientRetry = 0;
+
+    const doFetch = async (): Promise<void> => {
       const res = await fetch("/api/chat", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -208,11 +218,31 @@ export default function HomePage() {
           }
         }
       }
+    };
+
+    try {
+      await doFetch();
     } catch (err) {
       if ((err as Error).name === "AbortError") return;
       const msg = (err as Error)?.message || String(err);
-      console.error("[webclaw] chat error:", msg);
-      updatePlaceholder(`连接失败: ${msg}`);
+
+      // Auto-retry once for connection errors
+      if (isRetryableError(msg) && clientRetry < MAX_CLIENT_RETRIES) {
+        clientRetry++;
+        console.warn(`[webclaw] retrying chat (${clientRetry}/${MAX_CLIENT_RETRIES})...`);
+        try {
+          await new Promise((r) => setTimeout(r, 2000));
+          await doFetch();
+        } catch (retryErr) {
+          if ((retryErr as Error).name === "AbortError") return;
+          const retryMsg = (retryErr as Error)?.message || String(retryErr);
+          console.error("[webclaw] chat retry failed:", retryMsg);
+          updatePlaceholder(`连接失败: ${retryMsg}`);
+        }
+      } else {
+        console.error("[webclaw] chat error:", msg);
+        updatePlaceholder(`连接失败: ${msg}`);
+      }
     } finally {
       runningRef.current = false;
       abortRef.current = null;
@@ -398,12 +428,14 @@ export default function HomePage() {
   const toolbarItems = [
     {
       key: "status" as const,
-      icon: isOnline ? (
+      icon: gatewayLoading ? (
+        <Wifi size={14} className="text-slate-400 animate-pulse" />
+      ) : isOnline ? (
         <Wifi size={14} className="text-emerald-500" />
       ) : (
         <WifiOff size={14} className="text-red-400" />
       ),
-      label: isOnline ? "在线" : "离线",
+      label: gatewayLoading ? "检测中" : isOnline ? "在线" : "离线",
       panel: "settings" as PanelType,
     },
     {
@@ -459,7 +491,7 @@ export default function HomePage() {
             <p className="text-4xl mb-3">🦞</p>
             <p className="text-sm">向 OpenClaw 发送消息</p>
             <p className="text-xs mt-1 opacity-60">
-              {isOnline ? "Gateway 已连接" : "Gateway 未连接"}
+              {gatewayLoading ? "正在检测 Gateway..." : isOnline ? "Gateway 已连接" : "Gateway 未连接"}
             </p>
           </div>
         )}

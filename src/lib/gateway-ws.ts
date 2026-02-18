@@ -222,6 +222,6 @@ export function connectToGateway(): Promise<GatewayConnection> {
         ws.close();
         reject(new Error("Connection timeout"));
       }
-    }, 10000);
+    }, 5000);
   });
 }

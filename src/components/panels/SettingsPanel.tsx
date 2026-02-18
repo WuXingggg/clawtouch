@@ -24,6 +24,7 @@ export function SettingsPanel() {
   const { data: models } = useSWR("/api/models", fetcher);
 
   const isOnline = gateway?.online;
+  const gatewayLoading = gateway === undefined;
   const configStatus = models?.configStatus;
   const providers = models?.providers || {};
   const providerEntries = Object.entries(providers) as [string, ProviderConfig][];
@@ -34,7 +35,9 @@ export function SettingsPanel() {
       <Card>
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-3">
-            {isOnline ? (
+            {gatewayLoading ? (
+              <Wifi size={18} className="text-slate-400 animate-pulse" />
+            ) : isOnline ? (
               <Wifi size={18} className="text-emerald-500" />
             ) : (
               <WifiOff size={18} className="text-red-400" />
@@ -42,12 +45,12 @@ export function SettingsPanel() {
             <div>
               <p className="text-sm font-medium">Gateway</p>
               <p className="text-[11px] text-text-secondary">
-                {isOnline ? `已连接` : "未连接"}
+                {gatewayLoading ? "检测中..." : isOnline ? "已连接" : "未连接"}
               </p>
             </div>
           </div>
-          <Badge variant={isOnline ? "success" : "danger"}>
-            {isOnline ? "在线" : "离线"}
+          <Badge variant={gatewayLoading ? "warning" : isOnline ? "success" : "danger"}>
+            {gatewayLoading ? "检测中" : isOnline ? "在线" : "离线"}
           </Badge>
         </div>
       </Card>

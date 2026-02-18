@@ -66,17 +66,27 @@ export async function POST(request: NextRequest) {
         }
       });
 
-      // Connect to Gateway
-      let gw: Awaited<ReturnType<typeof connectToGateway>> | null = null;
-      try {
-        gw = await connectToGateway();
-      } catch (err) {
-        send({
-          type: "error",
-          error: `Gateway 连接失败: ${err instanceof Error ? err.message : String(err)}`,
-        });
-        close();
-        return;
+      // Connect to Gateway with retry
+      let gw!: Awaited<ReturnType<typeof connectToGateway>>;
+      const GW_RETRIES = 3;
+      const GW_RETRY_DELAYS = [0, 1000, 2000];
+      for (let attempt = 0; attempt < GW_RETRIES; attempt++) {
+        try {
+          if (attempt > 0) {
+            await new Promise((r) => setTimeout(r, GW_RETRY_DELAYS[attempt]));
+          }
+          gw = await connectToGateway();
+          break;
+        } catch (err) {
+          if (attempt === GW_RETRIES - 1) {
+            send({
+              type: "error",
+              error: `Gateway 连接失败: ${err instanceof Error ? err.message : String(err)}`,
+            });
+            close();
+            return;
+          }
+        }
       }
 
       const idempotencyKey = randomUUID();
