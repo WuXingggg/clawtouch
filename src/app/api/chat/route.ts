@@ -18,12 +18,29 @@ export async function POST(request: NextRequest) {
     const gw = await connectToGateway();
     const idempotencyKey = randomUUID();
 
-    // Wait for the final response
     const result = await new Promise<string>((resolve, reject) => {
       let latestText = "";
-      const timeout = setTimeout(() => {
+      let myRunId: string | null = null;
+      let settled = false;
+
+      const finish = (text: string) => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timeout);
         gw.close();
-        reject(new Error("Timeout: 120s"));
+        resolve(text);
+      };
+
+      const fail = (err: Error) => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timeout);
+        gw.close();
+        reject(err);
+      };
+
+      const timeout = setTimeout(() => {
+        finish(latestText || "(timeout)");
       }, 120000);
 
       gw.onEvent((event, payload) => {
@@ -31,23 +48,31 @@ export async function POST(request: NextRequest) {
         const p = payload as Record<string, unknown>;
         if (!p) return;
 
+        const eventRunId = p.runId as string | undefined;
+
+        // Ignore events from different runs (stale events from prior chats)
+        if (myRunId && eventRunId && eventRunId !== myRunId) return;
+
+        // Ignore stale final/aborted with no message before we know our runId
+        if (!myRunId && (p.state === "final" || p.state === "aborted") && !p.message) {
+          return;
+        }
+
+        // Capture runId from first meaningful event
+        if (!myRunId && eventRunId) {
+          myRunId = eventRunId;
+        }
+
         if (p.state === "delta" && p.message) {
           const text = extractText(p.message);
           if (text) latestText = text;
         } else if (p.state === "final") {
-          clearTimeout(timeout);
-          gw.close();
-          // final event may contain full message, or use accumulated delta
           const finalText = p.message ? extractText(p.message) : null;
-          resolve(finalText || latestText || "(empty response)");
+          finish(finalText || latestText || "(empty response)");
         } else if (p.state === "aborted") {
-          clearTimeout(timeout);
-          gw.close();
-          resolve(latestText || "(aborted)");
+          finish(latestText || "(aborted)");
         } else if (p.state === "error") {
-          clearTimeout(timeout);
-          gw.close();
-          reject(new Error((p.errorMessage as string) || "Chat error"));
+          fail(new Error((p.errorMessage as string) || "Chat error"));
         }
       });
 
@@ -56,11 +81,12 @@ export async function POST(request: NextRequest) {
         message: lastUserMsg.content,
         deliver: false,
         idempotencyKey,
-      }).catch((err) => {
-        clearTimeout(timeout);
-        gw.close();
-        reject(err);
-      });
+      }).then((res) => {
+        const r = res as Record<string, unknown> | undefined;
+        if (r?.runId && !myRunId) {
+          myRunId = r.runId as string;
+        }
+      }).catch(fail);
     });
 
     return NextResponse.json({ content: result });
