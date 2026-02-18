@@ -3,8 +3,8 @@ import { connectToGateway } from "@/lib/gateway-ws";
 import { randomUUID } from "crypto";
 
 const SESSION_KEY = process.env.OPENCLAW_SESSION_KEY || "agent:main:main";
-const MAX_RETRIES = 3;
-const RETRY_DELAYS = [2000, 4000, 8000]; // ms
+const MAX_RETRIES = 10;
+const RETRY_DELAYS = [2000, 3000, 5000, 5000, 5000, 5000, 5000, 5000, 5000, 5000]; // ms, ~45s total
 
 export async function POST(request: NextRequest) {
   let body: { messages?: unknown[] };
