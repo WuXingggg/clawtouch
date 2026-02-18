@@ -56,10 +56,23 @@ export default function HomePage() {
   // Panel state
   const [activePanel, setActivePanel] = useState<PanelType>(null);
 
-  // Persist chat & input
+  // Persist chat & input, and clean up stale empty placeholders on load
   useEffect(() => {
     localStorage.setItem("webclaw-chat", JSON.stringify(messages));
   }, [messages]);
+
+  // On mount: remove trailing empty assistant placeholder (from interrupted requests)
+  useEffect(() => {
+    setMessages((prev) => {
+      if (prev.length > 0) {
+        const last = prev[prev.length - 1];
+        if (last.role === "assistant" && !last.content) {
+          return prev.slice(0, -1);
+        }
+      }
+      return prev;
+    });
+  }, []);
 
   useEffect(() => {
     sessionStorage.setItem("webclaw-input", input);
@@ -91,32 +104,43 @@ export default function HomePage() {
         body: JSON.stringify({ messages: newMessages }),
       });
 
-      const data = await res.json();
+      let data: Record<string, unknown>;
+      try {
+        data = await res.json();
+      } catch {
+        throw new Error(`服务器返回异常 (${res.status})`);
+      }
 
       if (!res.ok) {
-        const err = new Error(data.error || `Error: ${res.status}`);
+        const err = new Error(
+          (data.error as string) || `Error: ${res.status}`
+        );
         (err as Error & { status: number }).status = res.status;
         throw err;
       }
 
+      const content = (data.content as string) || "(empty)";
+      console.log("[webclaw] response:", content.substring(0, 100));
       setMessages((prev) => {
         const updated = [...prev];
         updated[updated.length - 1] = {
           role: "assistant",
-          content: data.content || "(empty)",
+          content,
         };
         return updated;
       });
     } catch (err) {
       const e = err as Error & { status?: number };
-      const isBusy = e.status === 503 || e.message.includes("正在处理");
+      const msg = e?.message || String(err);
+      console.error("[webclaw] chat error:", msg);
+      const isBusy = e?.status === 503 || msg.includes("正在处理");
       setMessages((prev) => {
         const updated = [...prev];
         updated[updated.length - 1] = {
           role: "assistant",
           content: isBusy
             ? "Agent 正在忙，请稍后再试"
-            : `连接失败: ${e.message}`,
+            : `连接失败: ${msg}`,
         };
         return updated;
       });
