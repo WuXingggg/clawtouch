@@ -12,6 +12,7 @@ interface BottomSheetProps {
 
 export function BottomSheet({ open, onClose, title, children }: BottomSheetProps) {
   const sheetRef = useRef<HTMLDivElement>(null);
+  const pointerStart = useRef<{ x: number; y: number } | null>(null);
 
   useEffect(() => {
     if (open) {
@@ -28,10 +29,19 @@ export function BottomSheet({ open, onClose, title, children }: BottomSheetProps
 
   return (
     <div className="fixed inset-0 z-50">
-      {/* Backdrop */}
+      {/* Backdrop — only close on clean tap/click, not drag/swipe */}
       <div
         className="absolute inset-0 bg-black/40 backdrop-blur-sm"
-        onClick={onClose}
+        onPointerDown={(e) => {
+          pointerStart.current = { x: e.clientX, y: e.clientY };
+        }}
+        onPointerUp={(e) => {
+          if (!pointerStart.current) return;
+          const dx = Math.abs(e.clientX - pointerStart.current.x);
+          const dy = Math.abs(e.clientY - pointerStart.current.y);
+          pointerStart.current = null;
+          if (dx < 10 && dy < 10) onClose();
+        }}
       />
       {/* Sheet */}
       <div

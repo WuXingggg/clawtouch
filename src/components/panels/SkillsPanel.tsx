@@ -262,13 +262,13 @@ export function SkillsPanel() {
       });
       if (!res.ok) {
         const data = await res.json();
-        setInstallError(data.error || "安装失败");
+        setInstallError(`${slug}: ${data.error || "安装失败"}`);
       } else {
         setInstalledSlugs((prev) => new Set(prev).add(slug));
         await mutate();
       }
     } catch {
-      setInstallError("网络错误");
+      setInstallError(`${slug}: 网络超时，请稍后重试`);
     }
     setInstalling(null);
   };

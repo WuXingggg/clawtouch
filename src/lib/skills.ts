@@ -61,9 +61,11 @@ function runClawHub(slug: string, workdir: string): Promise<{ ok: boolean; error
       "clawhub",
       ["install", slug, "--no-input", "--force", "--workdir", workdir],
       { timeout: 60_000, maxBuffer: 10 * 1024 * 1024 },
-      (error, _stdout, stderr) => {
+      (error, stdout, stderr) => {
         if (error) {
-          resolve({ ok: false, error: stderr || error.message });
+          // Combine stderr + stdout for full error context
+          const msg = (stderr + "\n" + stdout).trim() || error.message;
+          resolve({ ok: false, error: msg });
         } else {
           resolve({ ok: true });
         }
