@@ -1019,18 +1019,24 @@ export default function HomePage() {
             style={{ maxHeight: 144 }}
           />
 
-          {/* Voice / Send button */}
-          {input.trim() || attachments.length > 0 || streaming ? (
+          {/* Stop button (shown during streaming) */}
+          {streaming && (
             <button
-              onClick={streaming ? handleStop : handleSend}
-              disabled={!streaming && !input.trim() && attachments.length === 0}
+              onClick={handleStop}
+              className="flex-shrink-0 w-10 h-10 rounded-full bg-red-500 text-white flex items-center justify-center active:scale-95 transition-transform"
+            >
+              <Square size={14} fill="currentColor" />
+            </button>
+          )}
+
+          {/* Voice / Send button */}
+          {input.trim() || attachments.length > 0 ? (
+            <button
+              onClick={handleSend}
+              disabled={!input.trim() && attachments.length === 0}
               className="flex-shrink-0 w-10 h-10 rounded-full bg-primary text-white flex items-center justify-center disabled:opacity-40 active:scale-95 transition-transform"
             >
-              {streaming ? (
-                <Square size={16} fill="currentColor" />
-              ) : (
-                <Send size={18} />
-              )}
+              <Send size={18} />
             </button>
           ) : (
             <button
