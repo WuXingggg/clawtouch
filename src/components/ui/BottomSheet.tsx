@@ -28,7 +28,7 @@ export function BottomSheet({ open, onClose, title, children }: BottomSheetProps
   if (!open) return null;
 
   return (
-    <div className="fixed inset-0 z-50">
+    <div className="fixed inset-0 z-50 md:flex md:items-center md:justify-center">
       {/* Backdrop — only close on clean tap/click, not drag/swipe */}
       <div
         className="absolute inset-0 bg-black/40 backdrop-blur-sm"
@@ -46,7 +46,7 @@ export function BottomSheet({ open, onClose, title, children }: BottomSheetProps
       {/* Sheet */}
       <div
         ref={sheetRef}
-        className="absolute bottom-0 left-0 right-0 bg-surface rounded-t-2xl max-h-[85vh] flex flex-col animate-slide-up"
+        className="absolute bottom-0 left-0 right-0 bg-surface rounded-t-2xl max-h-[85vh] flex flex-col animate-slide-up md:relative md:max-w-lg md:mx-auto md:rounded-2xl md:max-h-[70vh] md:shadow-xl"
       >
         {/* Handle + Header */}
         <div className="flex-shrink-0 pt-3 pb-2 px-4">

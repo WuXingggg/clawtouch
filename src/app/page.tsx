@@ -874,7 +874,7 @@ export default function HomePage() {
   };
 
   return (
-    <div className="flex flex-col h-dvh">
+    <div className="flex flex-col h-dvh w-full max-w-3xl mx-auto md:border-x md:border-border md:shadow-[0_0_40px_rgba(0,0,0,0.04)] md:bg-surface">
       <header className="flex-shrink-0 flex items-center justify-between h-12 px-4 bg-card/80 backdrop-blur-md border-b border-border">
         <span className="text-base font-semibold">WebClaw</span>
         {messages.length > 0 && (
