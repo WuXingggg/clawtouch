@@ -58,6 +58,7 @@ export async function POST(request: NextRequest) {
   let body: {
     messages?: unknown[];
     attachments?: Array<{ mimeType: string; fileName: string; content: string }>;
+    model?: string;
   };
   try {
     body = await request.json();
@@ -115,6 +116,7 @@ export async function POST(request: NextRequest) {
       });
 
       // Connect to Gateway with retry
+      const t0 = Date.now();
       let gw!: Awaited<ReturnType<typeof connectToGateway>>;
       const GW_RETRIES = 3;
       const GW_RETRY_DELAYS = [0, 1000, 2000];
@@ -136,13 +138,14 @@ export async function POST(request: NextRequest) {
           }
         }
       }
+      console.log(`[chat] gateway connected in ${Date.now() - t0}ms`);
 
       let idempotencyKey = randomUUID();
       let myRunId: string | null = null;
       let gotDelta = false;
       let agentBusyRetries = 0;
       const AGENT_BUSY_MAX_RETRIES = 3;
-      const AGENT_BUSY_DELAYS = [2000, 3000, 5000];
+      const AGENT_BUSY_DELAYS = [800, 1500, 3000];
 
       // Step detection state
       const seenToolIds = new Set<string>();
@@ -174,6 +177,8 @@ export async function POST(request: NextRequest) {
       }, 300_000);
 
       send({ type: "thinking" });
+      const tSend = Date.now();
+      let tFirstDelta = 0;
 
       const earlyEvents: Array<Record<string, unknown>> = [];
 
@@ -181,6 +186,10 @@ export async function POST(request: NextRequest) {
         if (settled) return;
 
         if (p.state === "delta" && p.message) {
+          if (!gotDelta) {
+            tFirstDelta = Date.now();
+            console.log(`[chat] first delta in ${tFirstDelta - tSend}ms (total ${tFirstDelta - t0}ms)`);
+          }
           gotDelta = true;
           const blocks = parseContentBlocks(p.message);
           const textBlocks = blocks.filter((b): b is TextBlock => b.type === "text");
@@ -275,6 +284,9 @@ export async function POST(request: NextRequest) {
                   if (body.attachments?.length) {
                     retryParams.attachments = body.attachments;
                   }
+                  if (body.model) {
+                    retryParams.model = body.model;
+                  }
                   const res = await gw.request("chat.send", retryParams, 30000);
                   const r = res as Record<string, unknown> | undefined;
                   if (r?.runId) {
@@ -368,7 +380,12 @@ export async function POST(request: NextRequest) {
         if (body.attachments?.length) {
           sendParams.attachments = body.attachments;
         }
+        if (body.model) {
+          sendParams.model = body.model;
+        }
+        const tRpc = Date.now();
         const res = await gw.request("chat.send", sendParams, 30000);
+        console.log(`[chat] chat.send RPC returned in ${Date.now() - tRpc}ms`);
         const r = res as Record<string, unknown> | undefined;
         if (r?.runId) {
           myRunId = r.runId as string;

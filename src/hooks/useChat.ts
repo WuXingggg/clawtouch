@@ -22,7 +22,7 @@ export interface Attachment {
   isImage: boolean;
 }
 
-const DEBOUNCE_MS = 500;
+const DEBOUNCE_MS = 150;
 
 let msgIdCounter = Date.now();
 function nextMsgId() {
@@ -198,6 +198,10 @@ export function useChat() {
       const apiBody: Record<string, unknown> = {
         messages: [{ role: "user", content: mergedText }],
       };
+      const selectedModel = getSettings().selectedModel;
+      if (selectedModel) {
+        apiBody.model = selectedModel;
+      }
       const imageAtts = allAttachments.filter((a) => a.isImage && a.base64);
       if (imageAtts.length > 0) {
         apiBody.attachments = imageAtts.map((a) => ({

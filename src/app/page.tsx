@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useRef, useEffect, useCallback } from "react";
+import { useState, useRef, useEffect, useLayoutEffect, useCallback } from "react";
 import useSWR, { useSWRConfig } from "swr";
 import {
   Send,
@@ -125,6 +125,7 @@ function HomeContent() {
 
   // ── UI state ──
   const listRef = useRef<HTMLDivElement>(null);
+  const bottomRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const [activePanel, setActivePanel] = useState<PanelType>(null);
   const [confirmClear, setConfirmClear] = useState(false);
@@ -154,11 +155,18 @@ function HomeContent() {
     sessionStorage.setItem("clawtouch-input", input);
   }, [input]);
 
-  useEffect(() => {
-    if (listRef.current) {
-      listRef.current.scrollTop = listRef.current.scrollHeight;
-    }
-  }, [messages]);
+  // Scroll to bottom on new messages — useLayoutEffect for immediate scroll,
+  // plus a delayed scroll to handle mobile keyboard dismiss resizing viewport
+  const scrollToBottom = useCallback(() => {
+    bottomRef.current?.scrollIntoView({ behavior: "instant" });
+  }, []);
+
+  useLayoutEffect(() => {
+    scrollToBottom();
+    // Delayed scroll to handle viewport resize from keyboard dismiss
+    const t = setTimeout(scrollToBottom, 300);
+    return () => clearTimeout(t);
+  }, [messages, scrollToBottom]);
 
   // ── Handlers ──
   const autoGrowTextarea = useCallback(() => {
@@ -368,7 +376,7 @@ function HomeContent() {
 
       <div
         ref={listRef}
-        className="flex-1 overflow-y-auto px-4 py-4 space-y-3 no-scrollbar"
+        className="flex-1 overflow-y-auto px-4 pt-4 pb-2 space-y-3 no-scrollbar"
         onTouchStart={handleTouchStart}
         onTouchMove={handleTouchMove}
         onTouchEnd={handleTouchEnd}
@@ -479,6 +487,7 @@ function HomeContent() {
             )}
           </div>
         ))}
+        <div ref={bottomRef} />
       </div>
 
       {/* Context menu */}
