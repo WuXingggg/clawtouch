@@ -20,15 +20,22 @@ const dictionaries: Record<Locale, Record<string, string>> = {
 
 const LOCALE_KEY = "clawtouch-locale";
 
-export function getLocale(): Locale {
-  if (typeof window === "undefined") return "zh-CN";
-  const stored = localStorage.getItem(LOCALE_KEY);
-  if (stored === "en" || stored === "zh-CN") return stored;
+function readLocale(): Locale {
+  try {
+    const stored = localStorage.getItem(LOCALE_KEY);
+    if (stored === "en" || stored === "zh-CN") return stored;
+  } catch { /* SSR or private browsing */ }
   return "zh-CN";
 }
 
 function saveLocale(locale: Locale) {
-  localStorage.setItem(LOCALE_KEY, locale);
+  try { localStorage.setItem(LOCALE_KEY, locale); } catch { /* ignore */ }
+}
+
+/** Read locale (safe for both SSR and client) */
+export function getLocale(): Locale {
+  if (typeof window === "undefined") return "zh-CN";
+  return readLocale();
 }
 
 interface I18nContextValue {
@@ -40,17 +47,21 @@ interface I18nContextValue {
 const I18nContext = createContext<I18nContextValue | null>(null);
 
 export function I18nProvider({ children }: { children: ReactNode }) {
-  const [locale, setLocaleState] = useState<Locale>(getLocale);
+  // Always start with "zh-CN" to match SSR output, then sync in useEffect
+  const [locale, setLocaleState] = useState<Locale>("zh-CN");
+
+  // Sync from localStorage after hydration
+  useEffect(() => {
+    const stored = readLocale();
+    if (stored !== "zh-CN") setLocaleState(stored);
+    document.documentElement.lang = stored;
+  }, []);
 
   const setLocale = useCallback((newLocale: Locale) => {
     setLocaleState(newLocale);
     saveLocale(newLocale);
     document.documentElement.lang = newLocale;
   }, []);
-
-  useEffect(() => {
-    document.documentElement.lang = locale;
-  }, [locale]);
 
   const t = useCallback(
     (key: string, params?: Record<string, string | number>): string => {

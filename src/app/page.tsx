@@ -64,20 +64,14 @@ function gwFetcher(url: string) {
   return fetch(url)
     .then((r) => r.json())
     .then((data) => {
-      try {
-        sessionStorage.setItem(GW_CACHE_KEY, JSON.stringify(data));
-      } catch { /* ignore */ }
+      cacheGwStatus(data);
       return data;
     });
 }
-function getGwFallback() {
-  if (typeof window === "undefined") return undefined;
-  try {
-    const cached = sessionStorage.getItem(GW_CACHE_KEY);
-    return cached ? JSON.parse(cached) : undefined;
-  } catch {
-    return undefined;
-  }
+// Note: Not used as fallbackData to avoid hydration mismatch.
+// Gateway status is fetched client-side only via SWR.
+function cacheGwStatus(data: unknown) {
+  try { sessionStorage.setItem(GW_CACHE_KEY, JSON.stringify(data)); } catch { /* ignore */ }
 }
 
 function HomeContent() {
@@ -88,7 +82,6 @@ function HomeContent() {
     dedupingInterval: 5000,
     errorRetryCount: 3,
     errorRetryInterval: 3000,
-    fallbackData: getGwFallback(),
   });
   const isOnline = gateway?.online;
   const gatewayLoading = gateway === undefined;
@@ -116,12 +109,17 @@ function HomeContent() {
     toggleAttachMenu,
   } = useAttachments();
 
-  const [input, setInput] = useState(() => {
-    if (typeof window !== "undefined") {
-      return sessionStorage.getItem("clawtouch-input") || "";
-    }
-    return "";
-  });
+  // Start empty to match SSR, restore from sessionStorage after hydration
+  const [input, setInput] = useState("");
+  const inputHydratedRef = useRef(false);
+
+  useEffect(() => {
+    try {
+      const saved = sessionStorage.getItem("clawtouch-input");
+      if (saved) setInput(saved);
+    } catch { /* ignore */ }
+    inputHydratedRef.current = true;
+  }, []);
 
   const { isRecording, toggleVoice } = useVoiceInput(setInput);
 
@@ -152,6 +150,7 @@ function HomeContent() {
   useEffect(() => { setMounted(true); }, []);
 
   useEffect(() => {
+    if (!inputHydratedRef.current) return;
     sessionStorage.setItem("clawtouch-input", input);
   }, [input]);
 

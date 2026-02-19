@@ -39,17 +39,9 @@ export function useChat() {
   const tRef = useRef(t);
   tRef.current = t;
 
-  const [messages, setMessages] = useState<Message[]>(() => {
-    if (typeof window !== "undefined") {
-      const saved = localStorage.getItem("clawtouch-chat");
-      if (saved) {
-        const parsed = JSON.parse(saved) as Message[];
-        const limit = getSettings().chatHistoryLimit;
-        return parsed.length > limit ? parsed.slice(-limit) : parsed;
-      }
-    }
-    return [];
-  });
+  // Start empty to match SSR, then load from localStorage after hydration
+  const [messages, setMessages] = useState<Message[]>([]);
+  const hydratedRef = useRef(false);
 
   const [streaming, setStreaming] = useState(false);
   const abortRef = useRef<AbortController | null>(null);
@@ -60,29 +52,37 @@ export function useChat() {
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const runningRef = useRef(false);
 
-  // Persist messages
+  // Load messages from localStorage after hydration + clean up interrupted sessions
   useEffect(() => {
+    try {
+      const saved = localStorage.getItem("clawtouch-chat");
+      if (saved) {
+        let parsed = JSON.parse(saved) as Message[];
+        const limit = getSettings().chatHistoryLimit;
+        if (parsed.length > limit) parsed = parsed.slice(-limit);
+        // Clean up trailing empty assistant messages
+        while (parsed.length > 0) {
+          const last = parsed[parsed.length - 1];
+          if (last.role === "assistant" && (!last.content || last.msgType === "tool")) {
+            parsed.pop();
+          } else {
+            break;
+          }
+        }
+        if (parsed.length > 0) setMessages(parsed);
+      }
+    } catch { /* ignore */ }
+    hydratedRef.current = true;
+  }, []);
+
+  // Persist messages (skip the initial empty state before hydration)
+  useEffect(() => {
+    if (!hydratedRef.current) return;
     const limit = getSettings().chatHistoryLimit;
     const trimmed = messages.length > limit ? messages.slice(-limit) : messages;
     const toSave = trimmed.map(({ status, ...rest }) => rest);
     localStorage.setItem("clawtouch-chat", JSON.stringify(toSave));
   }, [messages]);
-
-  // Clean up interrupted sessions on mount
-  useEffect(() => {
-    setMessages((prev) => {
-      let cleaned = [...prev];
-      while (cleaned.length > 0) {
-        const last = cleaned[cleaned.length - 1];
-        if (last.role === "assistant" && (!last.content || last.msgType === "tool")) {
-          cleaned.pop();
-        } else {
-          break;
-        }
-      }
-      return cleaned.length !== prev.length ? cleaned : prev;
-    });
-  }, []);
 
   // Cleanup on unmount
   useEffect(() => {
