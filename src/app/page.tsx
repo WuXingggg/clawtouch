@@ -178,6 +178,10 @@ export default function HomePage() {
   const longPressRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const longPressMoved = useRef(false);
 
+  // Hydration guard — suppress empty-state flash while client mounts
+  const [mounted, setMounted] = useState(false);
+  useEffect(() => { setMounted(true); }, []);
+
   // Pull-to-refresh
   const [pullRefreshing, setPullRefreshing] = useState(false);
   const pullStartY = useRef<number | null>(null);
@@ -910,7 +914,7 @@ export default function HomePage() {
           </div>
         )}
 
-        {messages.length === 0 && (
+        {mounted && messages.length === 0 && (
           <div className="flex flex-col items-center justify-center h-full text-text-secondary">
             <p className="text-4xl mb-3">🦞</p>
             <p className="text-sm">向 OpenClaw 发送消息</p>

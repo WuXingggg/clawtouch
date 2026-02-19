@@ -1,8 +1,12 @@
 import type { NextConfig } from "next";
+import { resolve } from "path";
 
 const nextConfig: NextConfig = {
   serverExternalPackages: ["child_process"],
-  allowedDevOrigins: ["https://preview.zkai.top", "http://preview.zkai.top"],
+  allowedDevOrigins: ["preview.zkai.top", "*.zkai.top"],
+  turbopack: {
+    root: resolve(__dirname),
+  },
   async redirects() {
     return [
       {
