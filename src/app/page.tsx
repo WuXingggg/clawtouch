@@ -579,7 +579,7 @@ function HomeContent() {
             ref={textareaRef}
             value={input}
             onChange={(e) => { setInput(e.target.value); autoGrowTextarea(); }}
-            onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); handleSend(); } }}
+            onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) { e.preventDefault(); handleSend(); } }}
             placeholder={isRecording ? t("app.listening") : t("app.inputPlaceholder")}
             rows={1}
             autoComplete="off"
