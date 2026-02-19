@@ -245,6 +245,11 @@ export async function POST(request: NextRequest) {
               send({ type: "thinking" }); // keep client waiting
               setTimeout(async () => {
                 try {
+                  // Abort any lingering run before retrying
+                  try {
+                    await gw.request("chat.abort", { sessionKey: SESSION_KEY });
+                  } catch { /* ignore abort errors */ }
+
                   // Reset state for retry
                   gotDelta = false;
                   myRunId = null;
