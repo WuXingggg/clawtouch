@@ -2,6 +2,7 @@
 
 import { useState, useRef, useEffect, useCallback } from "react";
 import { getSettings } from "@/lib/settings";
+import { useT } from "@/lib/i18n";
 
 export interface Message {
   role: "user" | "assistant";
@@ -29,11 +30,15 @@ function nextMsgId() {
 }
 
 const isRetryableError = (msg: string) =>
-  /连接失败|Gateway|WebSocket|timeout|ECONNREFUSED|fetch failed|正在忙/i.test(msg);
+  /连接失败|connection failed|Gateway|WebSocket|timeout|ECONNREFUSED|fetch failed|正在忙|agent.+busy/i.test(msg);
 
 const MAX_CLIENT_RETRIES = 2;
 
 export function useChat() {
+  const { t } = useT();
+  const tRef = useRef(t);
+  tRef.current = t;
+
   const [messages, setMessages] = useState<Message[]>(() => {
     if (typeof window !== "undefined") {
       const saved = localStorage.getItem("clawtouch-chat");
@@ -290,7 +295,7 @@ export function useChat() {
         clientRetry++;
         const delay = 3000 * clientRetry;
         console.warn(`[clawtouch] agent busy, requeue in ${delay}ms (${clientRetry}/${MAX_CLIENT_RETRIES})`);
-        updatePlaceholder("排队中...");
+        updatePlaceholder(tRef.current("chat.queueing"));
         updateUserMsgStatus("queued");
         try {
           await new Promise((r) => setTimeout(r, delay));
@@ -304,7 +309,7 @@ export function useChat() {
           }
           const retryMsg = (retryErr as Error)?.message || String(retryErr);
           console.error("[clawtouch] agent busy requeue failed:", retryMsg);
-          updatePlaceholder(`连接失败: ${retryMsg}`);
+          updatePlaceholder(tRef.current("chat.connectionFailed", { msg: retryMsg }));
         }
       } else if (isRetryableError(msg) && clientRetry < MAX_CLIENT_RETRIES) {
         clientRetry++;
@@ -320,11 +325,11 @@ export function useChat() {
           }
           const retryMsg = (retryErr as Error)?.message || String(retryErr);
           console.error("[clawtouch] chat retry failed:", retryMsg);
-          updatePlaceholder(`连接失败: ${retryMsg}`);
+          updatePlaceholder(tRef.current("chat.connectionFailed", { msg: retryMsg }));
         }
       } else {
         console.error("[clawtouch] chat error:", msg);
-        updatePlaceholder(`连接失败: ${msg}`);
+        updatePlaceholder(tRef.current("chat.connectionFailed", { msg }));
       }
     } finally {
       updateUserMsgStatus(batchSuccess ? "sent" : "error");

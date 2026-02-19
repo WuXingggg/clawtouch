@@ -36,23 +36,26 @@ import { SettingsPanel } from "@/components/panels/SettingsPanel";
 import { useChat } from "@/hooks/useChat";
 import { useAttachments } from "@/hooks/useAttachments";
 import { useVoiceInput } from "@/hooks/useVoiceInput";
+import { I18nProvider, useT } from "@/lib/i18n";
 import type { Message } from "@/hooks/useChat";
 
 type PanelType = "tokens" | "skills" | "cron" | "settings" | null;
 
-// ── Tool indicator display ──
-const TOOL_ZH: Record<string, string> = {
-  web_search: "搜索中...",
-  read: "读取文件...",
-  write: "写入文件...",
-  cron: "处理定时任务...",
-  Bash: "执行命令...",
-  list_files: "浏览文件...",
+const TOOL_KEYS: Record<string, string> = {
+  web_search: "tool.web_search",
+  read: "tool.read",
+  write: "tool.write",
+  cron: "tool.cron",
+  Bash: "tool.Bash",
+  list_files: "tool.list_files",
 };
 
-function toolLabel(name?: string): string {
-  if (!name) return "处理中...";
-  return TOOL_ZH[name] || `使用 ${name}...`;
+export default function HomePage() {
+  return (
+    <I18nProvider>
+      <HomeContent />
+    </I18nProvider>
+  );
 }
 
 // ── Gateway status caching ──
@@ -77,7 +80,8 @@ function getGwFallback() {
   }
 }
 
-export default function HomePage() {
+function HomeContent() {
+  const { t } = useT();
   const { mutate } = useSWRConfig();
   const { data: gateway } = useSWR("/api/gateway", gwFetcher, {
     refreshInterval: 10000,
@@ -180,11 +184,11 @@ export default function HomePage() {
 
     let message = text;
     if (otherAtts.length > 0) {
-      const attachList = otherAtts.map((a) => `[附件: ${a.name}](${a.url})`).join("\n");
+      const attachList = otherAtts.map((a) => `[${t("app.attachment", { name: a.name })}](${a.url})`).join("\n");
       message = message ? `${message}\n\n${attachList}` : attachList;
     }
     if (!message && imageAtts.length > 0) {
-      message = "请看图片";
+      message = t("app.lookAtImage");
     }
 
     if (attachments.length > 0) clearAttachments();
@@ -326,20 +330,20 @@ export default function HomePage() {
       ) : (
         <WifiOff size={14} className="text-red-400" />
       ),
-      label: gatewayLoading ? "检测中" : isOnline ? "在线" : "离线",
+      label: gatewayLoading ? t("toolbar.detecting") : isOnline ? t("toolbar.online") : t("toolbar.offline"),
       panel: "settings" as PanelType,
     },
-    { key: "skills", icon: <Puzzle size={14} />, label: "技能", panel: "skills" as PanelType },
-    { key: "tokens", icon: <BarChart3 size={14} />, label: "Token", panel: "tokens" as PanelType },
-    { key: "cron", icon: <Clock size={14} />, label: "定时任务", panel: "cron" as PanelType },
-    { key: "settings", icon: <Settings size={14} />, label: "设置", panel: "settings" as PanelType },
+    { key: "skills", icon: <Puzzle size={14} />, label: t("toolbar.skills"), panel: "skills" as PanelType },
+    { key: "tokens", icon: <BarChart3 size={14} />, label: t("toolbar.token"), panel: "tokens" as PanelType },
+    { key: "cron", icon: <Clock size={14} />, label: t("toolbar.cron"), panel: "cron" as PanelType },
+    { key: "settings", icon: <Settings size={14} />, label: t("toolbar.settings"), panel: "settings" as PanelType },
   ];
 
   const panelTitles: Record<string, string> = {
-    tokens: "Token 统计",
-    skills: "Skills 管理",
-    cron: "定时任务",
-    settings: "设置",
+    tokens: t("panel.tokens"),
+    skills: t("panel.skills"),
+    cron: t("panel.cron"),
+    settings: t("panel.settings"),
   };
 
   // ── Render ──
@@ -353,7 +357,7 @@ export default function HomePage() {
               onClick={handleClearClick}
               className="text-xs px-2 py-1 rounded-lg bg-red-500 text-white animate-pulse"
             >
-              确认清除?
+              {t("app.confirmClear")}
             </button>
           ) : (
             <button onClick={handleClearClick} className="text-text-secondary p-1.5">
@@ -386,9 +390,9 @@ export default function HomePage() {
         {mounted && messages.length === 0 && (
           <div className="flex flex-col items-center justify-center h-full text-text-secondary">
             <p className="text-4xl mb-3">🦞</p>
-            <p className="text-sm">向 OpenClaw 发送消息</p>
+            <p className="text-sm">{t("app.sendMessage")}</p>
             <p className="text-xs mt-1 opacity-60">
-              {gatewayLoading ? "正在检测 Gateway..." : isOnline ? "Gateway 已连接" : "Gateway 未连接"}
+              {gatewayLoading ? t("app.detectingGateway") : isOnline ? t("app.gatewayConnected") : t("app.gatewayDisconnected")}
             </p>
           </div>
         )}
@@ -400,7 +404,7 @@ export default function HomePage() {
           >
             {msg.msgType === "tool" ? (
               <div className="flex items-center gap-1.5 px-2 py-1 text-xs text-text-secondary animate-pulse">
-                <span>{toolLabel(msg.toolName)}</span>
+                <span>{msg.toolName ? (TOOL_KEYS[msg.toolName] ? t(TOOL_KEYS[msg.toolName]) : t("tool.using", { name: msg.toolName })) : t("tool.default")}</span>
               </div>
             ) : (
               <div className={msg.role === "user" ? "flex flex-col items-end gap-0.5 w-full" : ""}>
@@ -467,7 +471,7 @@ export default function HomePage() {
                   <Loader2 size={12} className="animate-spin text-primary/50 mr-1" />
                 )}
                 {msg.role === "user" && msg.status === "queued" && (
-                  <span className="text-[10px] text-text-secondary mr-1">排队中</span>
+                  <span className="text-[10px] text-text-secondary mr-1">{t("app.queued")}</span>
                 )}
                 {msg.role === "user" && msg.status === "error" && (
                   <AlertCircle size={12} className="text-red-400 mr-1" />
@@ -490,15 +494,15 @@ export default function HomePage() {
             }}
           >
             <button onClick={handleCopyMsg} className="flex items-center gap-2.5 w-full px-4 py-2.5 text-sm text-text hover:bg-slate-50 active:bg-slate-100">
-              <Copy size={16} className="text-text-secondary" /> 复制
+              <Copy size={16} className="text-text-secondary" /> {t("ctx.copy")}
             </button>
             {contextMenu.msgRole === "user" && (
               <button onClick={handleResendMsg} className="flex items-center gap-2.5 w-full px-4 py-2.5 text-sm text-text hover:bg-slate-50 active:bg-slate-100">
-                <RotateCcw size={16} className="text-text-secondary" /> 重新编辑
+                <RotateCcw size={16} className="text-text-secondary" /> {t("ctx.reedit")}
               </button>
             )}
             <button onClick={handleDeleteMsg} className="flex items-center gap-2.5 w-full px-4 py-2.5 text-sm text-red-500 hover:bg-slate-50 active:bg-slate-100">
-              <Trash size={16} /> 删除
+              <Trash size={16} /> {t("ctx.delete")}
             </button>
           </div>
         </>
@@ -543,13 +547,13 @@ export default function HomePage() {
         {showAttachMenu && (
           <div className="flex gap-3 px-4 py-2">
             <button onClick={() => galleryInputRef.current?.click()} className="flex flex-col items-center gap-1 p-2 rounded-xl bg-slate-100 text-text-secondary text-[10px] min-w-[56px]">
-              <Image size={20} /> 图库
+              <Image size={20} /> {t("app.gallery")}
             </button>
             <button onClick={() => cameraInputRef.current?.click()} className="flex flex-col items-center gap-1 p-2 rounded-xl bg-slate-100 text-text-secondary text-[10px] min-w-[56px]">
-              <Camera size={20} /> 拍照
+              <Camera size={20} /> {t("app.camera")}
             </button>
             <button onClick={() => fileInputRef.current?.click()} className="flex flex-col items-center gap-1 p-2 rounded-xl bg-slate-100 text-text-secondary text-[10px] min-w-[56px]">
-              <File size={20} /> 文件
+              <File size={20} /> {t("app.file")}
             </button>
           </div>
         )}
@@ -568,7 +572,7 @@ export default function HomePage() {
             value={input}
             onChange={(e) => { setInput(e.target.value); autoGrowTextarea(); }}
             onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); handleSend(); } }}
-            placeholder={isRecording ? "正在听..." : "输入消息..."}
+            placeholder={isRecording ? t("app.listening") : t("app.inputPlaceholder")}
             rows={1}
             autoComplete="off"
             className={`flex-1 resize-none rounded-xl bg-surface border px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-primary/30 ${isRecording ? "border-red-400 ring-2 ring-red-400/30" : "border-border"}`}

@@ -5,14 +5,9 @@ import useSWR from "swr";
 import { Card } from "@/components/ui/Card";
 import { TrendChart } from "@/components/tokens/TrendChart";
 import { estimateCost, formatCost } from "@/lib/pricing";
+import { useT } from "@/lib/i18n";
 
 const fetcher = (url: string) => fetch(url).then((r) => r.json());
-
-const periods = [
-  { label: "7天", days: 7 },
-  { label: "30天", days: 30 },
-  { label: "90天", days: 90 },
-];
 
 function fmt(n: number): string {
   if (n >= 1_000_000) return (n / 1_000_000).toFixed(1) + "M";
@@ -21,8 +16,15 @@ function fmt(n: number): string {
 }
 
 export function TokenPanel() {
+  const { t } = useT();
   const [days, setDays] = useState(30);
   const { data } = useSWR(`/api/tokens?days=${days}`, fetcher);
+
+  const periods = [
+    { label: t("tokens.days7"), days: 7 },
+    { label: t("tokens.days30"), days: 30 },
+    { label: t("tokens.days90"), days: 90 },
+  ];
 
   return (
     <div className="space-y-4 py-3">
@@ -45,7 +47,7 @@ export function TokenPanel() {
 
       {/* Summary */}
       <Card>
-        <p className="text-xs text-text-secondary mb-1">总 Tokens</p>
+        <p className="text-xs text-text-secondary mb-1">{t("tokens.total")}</p>
         <div className="flex items-baseline gap-2 mb-3">
           <p className="text-2xl font-bold text-primary">
             {fmt(data?.total?.all || 0)}
@@ -61,28 +63,28 @@ export function TokenPanel() {
           <div>
             <div className="flex items-center gap-1.5 mb-0.5">
               <span className="w-2 h-2 rounded-full bg-purple-400" />
-              <span className="text-[11px] text-text-secondary">输入</span>
+              <span className="text-[11px] text-text-secondary">{t("tokens.input")}</span>
             </div>
             <p className="text-base font-bold">{fmt(data?.total?.input || 0)}</p>
           </div>
           <div>
             <div className="flex items-center gap-1.5 mb-0.5">
               <span className="w-2 h-2 rounded-full bg-orange-400" />
-              <span className="text-[11px] text-text-secondary">输出</span>
+              <span className="text-[11px] text-text-secondary">{t("tokens.output")}</span>
             </div>
             <p className="text-base font-bold">{fmt(data?.total?.output || 0)}</p>
           </div>
           <div>
             <div className="flex items-center gap-1.5 mb-0.5">
               <span className="w-2 h-2 rounded-full bg-cyan-400" />
-              <span className="text-[11px] text-text-secondary">缓存读</span>
+              <span className="text-[11px] text-text-secondary">{t("tokens.cacheRead")}</span>
             </div>
             <p className="text-base font-bold">{fmt(data?.total?.cacheRead || 0)}</p>
           </div>
           <div>
             <div className="flex items-center gap-1.5 mb-0.5">
               <span className="w-2 h-2 rounded-full bg-pink-400" />
-              <span className="text-[11px] text-text-secondary">缓存写</span>
+              <span className="text-[11px] text-text-secondary">{t("tokens.cacheWrite")}</span>
             </div>
             <p className="text-base font-bold">{fmt(data?.total?.cacheWrite || 0)}</p>
           </div>
@@ -92,7 +94,7 @@ export function TokenPanel() {
       {/* Today */}
       <Card>
         <div className="flex items-center justify-between">
-          <span className="text-sm font-medium">今日使用</span>
+          <span className="text-sm font-medium">{t("tokens.today")}</span>
           <span className="text-xs text-text-secondary">{data?.today?.date}</span>
         </div>
         <div className="flex items-baseline gap-2 mt-1">
@@ -120,7 +122,7 @@ export function TokenPanel() {
 
       {/* Trend */}
       <Card>
-        <p className="text-sm font-medium mb-3">使用趋势</p>
+        <p className="text-sm font-medium mb-3">{t("tokens.trend")}</p>
         <TrendChart data={data?.daily || []} />
       </Card>
     </div>

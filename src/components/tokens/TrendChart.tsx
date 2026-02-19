@@ -8,6 +8,7 @@ import {
   ResponsiveContainer,
   Tooltip,
 } from "recharts";
+import { useT } from "@/lib/i18n";
 
 interface TrendData {
   date: string;
@@ -18,6 +19,8 @@ interface TrendData {
 }
 
 export function TrendChart({ data }: { data: TrendData[] }) {
+  const { t } = useT();
+
   const chartData = data.map((d) => ({
     date: d.date.slice(5), // "MM-DD"
     tokens:
@@ -27,7 +30,7 @@ export function TrendChart({ data }: { data: TrendData[] }) {
   if (chartData.length === 0) {
     return (
       <div className="h-40 flex items-center justify-center text-sm text-text-secondary">
-        暂无数据
+        {t("tokens.noData")}
       </div>
     );
   }
@@ -53,7 +56,7 @@ export function TrendChart({ data }: { data: TrendData[] }) {
         <Tooltip
           // eslint-disable-next-line @typescript-eslint/no-explicit-any
           formatter={(value: any) => [Number(value).toLocaleString(), "Tokens"]}
-          labelFormatter={(label: unknown) => `日期: ${label}`}
+          labelFormatter={(label: unknown) => t("tokens.date", { label: String(label) })}
           contentStyle={{
             borderRadius: 8,
             fontSize: 12,

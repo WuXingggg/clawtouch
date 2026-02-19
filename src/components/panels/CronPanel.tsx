@@ -5,6 +5,7 @@ import { Card } from "@/components/ui/Card";
 import { Badge } from "@/components/ui/Badge";
 import { Empty } from "@/components/ui/Empty";
 import { Play, Pencil } from "lucide-react";
+import { useT } from "@/lib/i18n";
 
 const fetcher = (url: string) => fetch(url).then((r) => r.json());
 
@@ -24,31 +25,32 @@ interface CronPanelProps {
   onSendMessage?: (text: string) => void;
 }
 
-function formatSchedule(s?: CronJob["schedule"]): string {
-  if (!s) return "未设置";
-  if (s.kind === "cron") return `cron: ${s.expr}${s.tz ? ` (${s.tz})` : ""}`;
-  if (s.kind === "at") return `一次性: ${s.at}`;
-  if (s.kind === "every") return `每 ${Math.round((s.everyMs || 0) / 60000)} 分钟`;
-  return s.kind;
-}
-
 export function CronPanel({ onSendMessage }: CronPanelProps) {
+  const { t } = useT();
   const { data } = useSWR("/api/cron", fetcher);
   const loading = data === undefined;
 
   const jobs: CronJob[] = Array.isArray(data) ? data : data?.jobs || [];
 
+  function formatSchedule(s?: CronJob["schedule"]): string {
+    if (!s) return t("cron.notSet");
+    if (s.kind === "cron") return `cron: ${s.expr}${s.tz ? ` (${s.tz})` : ""}`;
+    if (s.kind === "at") return t("cron.once", { at: s.at || "" });
+    if (s.kind === "every") return t("cron.everyMinutes", { min: Math.round((s.everyMs || 0) / 60000) });
+    return s.kind;
+  }
+
   const handleRun = (job: CronJob) => {
-    const text = job.payload?.message || `执行定时任务: ${job.name}`;
+    const text = job.payload?.message || t("cron.runTask", { name: job.name });
     onSendMessage?.(text);
   };
 
   const handleEdit = (job: CronJob) => {
     const lines = [
-      `我想编辑定时任务「${job.name}」(ID: ${job.id})，当前配置：`,
-      `- 定时: ${formatSchedule(job.schedule)}`,
-      `- 状态: ${job.enabled !== false ? "启用" : "禁用"}`,
-      `- 执行方式: ${job.sessionTarget || "未知"}`,
+      t("cron.editPrompt", { name: job.name, id: job.id }),
+      `- ${t("cron.scheduleLabel")}: ${formatSchedule(job.schedule)}`,
+      `- ${t("cron.statusLabel")}: ${job.enabled !== false ? t("cron.enabled") : t("cron.disabled")}`,
+      `- ${t("cron.execMethod")}: ${job.sessionTarget || "unknown"}`,
     ];
     if (job.payload?.message) {
       const preview = job.payload.message.length > 100
@@ -57,16 +59,16 @@ export function CronPanel({ onSendMessage }: CronPanelProps) {
       lines.push(`- Prompt: ${preview}`);
     }
     if (job.delivery && job.delivery.mode !== "none") {
-      lines.push(`- 投递: ${job.delivery.channel || "默认"}${job.delivery.to ? ` → ${job.delivery.to}` : ""}`);
+      lines.push(`- ${t("cron.delivery")}: ${job.delivery.channel || t("cron.defaultChannel")}${job.delivery.to ? ` → ${job.delivery.to}` : ""}`);
     }
-    lines.push("", "请问你想修改哪些内容？");
+    lines.push("", t("cron.editQuestion"));
     onSendMessage?.(lines.join("\n"));
   };
 
   if (loading) {
     return (
       <div className="py-8 text-center text-sm text-text-secondary animate-pulse">
-        加载定时任务...
+        {t("cron.loading")}
       </div>
     );
   }
@@ -75,13 +77,13 @@ export function CronPanel({ onSendMessage }: CronPanelProps) {
     <div className="space-y-3 py-3">
       <div className="flex gap-2">
         <Badge variant="success">
-          运行中 {jobs.filter((j) => j.enabled !== false).length}
+          {t("cron.running")} {jobs.filter((j) => j.enabled !== false).length}
         </Badge>
-        <Badge variant="default">共 {jobs.length}</Badge>
+        <Badge variant="default">{t("cron.total")} {jobs.length}</Badge>
       </div>
 
       {jobs.length === 0 ? (
-        <Empty message="暂无定时任务" />
+        <Empty message={t("cron.empty")} />
       ) : (
         <div className="space-y-2">
           {jobs.map((job) => (
@@ -89,7 +91,7 @@ export function CronPanel({ onSendMessage }: CronPanelProps) {
               <div className="flex items-center justify-between mb-1.5">
                 <span className="text-sm font-medium">{job.name}</span>
                 <Badge variant={job.enabled !== false ? "success" : "default"}>
-                  {job.enabled !== false ? "启用" : "禁用"}
+                  {job.enabled !== false ? t("cron.enabled") : t("cron.disabled")}
                 </Badge>
               </div>
               {job.schedule && (
@@ -108,14 +110,14 @@ export function CronPanel({ onSendMessage }: CronPanelProps) {
                   className="flex items-center gap-1 px-3 py-1 rounded-full bg-slate-100 text-text-secondary text-xs font-medium"
                 >
                   <Pencil size={10} />
-                  编辑
+                  {t("cron.edit")}
                 </button>
                 <button
                   onClick={() => handleRun(job)}
                   className="flex items-center gap-1 px-3 py-1 rounded-full bg-primary/10 text-primary text-xs font-medium"
                 >
                   <Play size={10} />
-                  执行
+                  {t("cron.execute")}
                 </button>
               </div>
             </Card>

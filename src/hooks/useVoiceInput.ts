@@ -1,8 +1,10 @@
 "use client";
 
 import { useState, useRef, useCallback } from "react";
+import { useT } from "@/lib/i18n";
 
 export function useVoiceInput(setInput: (updater: (prev: string) => string) => void) {
+  const { t, locale } = useT();
   const [isRecording, setIsRecording] = useState(false);
   const recognitionRef = useRef<SpeechRecognition | null>(null);
 
@@ -15,12 +17,12 @@ export function useVoiceInput(setInput: (updater: (prev: string) => string) => v
 
     const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
     if (!SpeechRecognition) {
-      alert("此浏览器不支持语音识别");
+      alert(t("voice.unsupported"));
       return;
     }
 
     const recognition = new SpeechRecognition();
-    recognition.lang = "zh-CN";
+    recognition.lang = locale === "en" ? "en-US" : "zh-CN";
     recognition.continuous = true;
     recognition.interimResults = true;
 
@@ -52,7 +54,7 @@ export function useVoiceInput(setInput: (updater: (prev: string) => string) => v
     recognitionRef.current = recognition;
     recognition.start();
     setIsRecording(true);
-  }, [isRecording, setInput]);
+  }, [isRecording, setInput, t, locale]);
 
   return { isRecording, toggleVoice };
 }

@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useRef, useCallback } from "react";
+import { useT } from "@/lib/i18n";
 
 export interface Attachment {
   name: string;
@@ -13,6 +14,7 @@ export interface Attachment {
 const FILE_UPLOAD_LIMIT_MB = 10;
 
 export function useAttachments() {
+  const { t } = useT();
   const [attachments, setAttachments] = useState<Attachment[]>([]);
   const [showAttachMenu, setShowAttachMenu] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -26,7 +28,7 @@ export function useAttachments() {
       const isImage = file.type.startsWith("image/");
       if (isImage && file.size > FILE_UPLOAD_LIMIT_MB * 1024 * 1024) {
         setAttachments((prev) => [...prev, {
-          name: `[超过${FILE_UPLOAD_LIMIT_MB}MB] ${file.name}`, url: "", isImage: false,
+          name: `${t("attach.tooLarge", { size: FILE_UPLOAD_LIMIT_MB })} ${file.name}`, url: "", isImage: false,
         }]);
         continue;
       }
@@ -48,11 +50,11 @@ export function useAttachments() {
         }]);
       } catch {
         setAttachments((prev) => [...prev, {
-          name: file.name, url: `[上传失败] ${file.name}`, isImage: false,
+          name: file.name, url: `${t("attach.uploadFailed")} ${file.name}`, isImage: false,
         }]);
       }
     }
-  }, []);
+  }, [t]);
 
   const removeAttachment = useCallback((idx: number) => {
     setAttachments((prev) => prev.filter((_, i) => i !== idx));

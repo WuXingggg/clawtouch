@@ -88,12 +88,12 @@ export async function installHubSkill(slug: string): Promise<{ ok: boolean; erro
       return {
         ok: false,
         error: isRateLimit
-          ? "ClawHub 请求频率限制，请稍后再试"
+          ? "ClawHub rate limit exceeded, please try again later"
           : result.error,
       };
     }
   }
-  return { ok: false, error: "安装失败" };
+  return { ok: false, error: "Installation failed" };
 }
 
 /** Scan ~/.openclaw/skills/ to get installed ClawHub slugs (dir names) */

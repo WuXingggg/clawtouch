@@ -6,6 +6,7 @@ import { Card } from "@/components/ui/Card";
 import { Badge } from "@/components/ui/Badge";
 import { Check, Wifi, WifiOff, ChevronDown } from "lucide-react";
 import { getSettings, saveSettings, type Settings } from "@/lib/settings";
+import { useT } from "@/lib/i18n";
 
 const fetcher = (url: string) => fetch(url).then((r) => r.json());
 
@@ -22,6 +23,7 @@ interface ProviderConfig {
 }
 
 export function SettingsPanel() {
+  const { t, locale, setLocale } = useT();
   const { data: gateway } = useSWR("/api/gateway", fetcher);
   const { data: models, mutate: mutateModels } = useSWR("/api/models", fetcher);
 
@@ -90,19 +92,43 @@ export function SettingsPanel() {
             <div>
               <p className="text-sm font-medium">Gateway</p>
               <p className="text-[11px] text-text-secondary">
-                {gatewayLoading ? "检测中..." : isOnline ? "已连接" : "未连接"}
+                {gatewayLoading ? t("settings.detecting") : isOnline ? t("settings.connected") : t("settings.disconnected")}
               </p>
             </div>
           </div>
           <Badge variant={gatewayLoading ? "warning" : isOnline ? "success" : "danger"}>
-            {gatewayLoading ? "检测中" : isOnline ? "在线" : "离线"}
+            {gatewayLoading ? t("settings.online") : isOnline ? t("settings.online") : t("settings.offline")}
           </Badge>
         </div>
       </Card>
 
+      {/* Language */}
+      <Card>
+        <p className="text-sm font-medium mb-2">{t("settings.language")}</p>
+        <div className="flex gap-2">
+          <button
+            onClick={() => setLocale("zh-CN")}
+            className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors ${
+              locale === "zh-CN" ? "bg-primary text-white" : "bg-slate-100 text-text-secondary"
+            }`}
+          >
+            中文
+          </button>
+          <button
+            onClick={() => setLocale("en")}
+            className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors ${
+              locale === "en" ? "bg-primary text-white" : "bg-slate-100 text-text-secondary"
+            }`}
+          >
+            English
+          </button>
+        </div>
+        <p className="text-[11px] text-text-secondary mt-1">{t("settings.languageDesc")}</p>
+      </Card>
+
       {/* Model Selection */}
       <Card>
-        <p className="text-sm font-medium mb-2">当前模型</p>
+        <p className="text-sm font-medium mb-2">{t("settings.currentModel")}</p>
         <div className="relative">
           <select
             value={settings.selectedModel || currentModel}
@@ -110,7 +136,7 @@ export function SettingsPanel() {
             className="w-full appearance-none bg-surface border border-border rounded-lg px-3 py-2 text-sm pr-8 focus:outline-none focus:ring-2 focus:ring-primary/30"
           >
             {!settings.selectedModel && currentModel && (
-              <option value="">{currentModel.split("/").pop()} (默认)</option>
+              <option value="">{currentModel.split("/").pop()} {t("settings.default")}</option>
             )}
             {allModels.map((m) => (
               <option key={m.id} value={m.id}>
@@ -122,20 +148,20 @@ export function SettingsPanel() {
         </div>
         {currentModel && (
           <p className="text-[11px] text-text-secondary mt-1">
-            配置: {currentModel}
+            {t("settings.configLabel", { model: currentModel })}
           </p>
         )}
       </Card>
 
       {/* Chat Settings */}
       <Card>
-        <p className="text-sm font-medium mb-3">聊天设置</p>
+        <p className="text-sm font-medium mb-3">{t("settings.chatSettings")}</p>
         <div className="space-y-3">
           {/* Context turns */}
           <div className="flex items-center justify-between">
             <div>
-              <p className="text-[13px]">上下文轮数</p>
-              <p className="text-[11px] text-text-secondary">Agent 可见的历史轮数</p>
+              <p className="text-[13px]">{t("settings.contextTurns")}</p>
+              <p className="text-[11px] text-text-secondary">{t("settings.contextTurnsDesc")}</p>
             </div>
             <div className="flex items-center gap-2">
               <input
@@ -156,8 +182,8 @@ export function SettingsPanel() {
           {/* Chat history limit */}
           <div className="flex items-center justify-between">
             <div>
-              <p className="text-[13px]">聊天记录上限</p>
-              <p className="text-[11px] text-text-secondary">本地保存的最大消息数</p>
+              <p className="text-[13px]">{t("settings.chatHistoryLimit")}</p>
+              <p className="text-[11px] text-text-secondary">{t("settings.chatHistoryLimitDesc")}</p>
             </div>
             <div className="flex items-center gap-2">
               <input
@@ -178,26 +204,26 @@ export function SettingsPanel() {
       {/* Config Status */}
       {configStatus && (
         <Card>
-          <p className="text-sm font-medium mb-2">配置文件</p>
+          <p className="text-sm font-medium mb-2">{t("settings.configFile")}</p>
           <div className="space-y-1.5 text-[13px]">
             <div className="flex justify-between">
-              <span className="text-text-secondary">状态</span>
+              <span className="text-text-secondary">{t("settings.status")}</span>
               <Badge variant={configStatus.loaded ? "success" : "danger"}>
-                {configStatus.loaded ? "已加载" : "未加载"}
+                {configStatus.loaded ? t("settings.loaded") : t("settings.notLoaded")}
               </Badge>
             </div>
             <div className="flex justify-between">
-              <span className="text-text-secondary">有效</span>
+              <span className="text-text-secondary">{t("settings.valid")}</span>
               {configStatus.valid ? (
                 <span className="flex items-center gap-1 text-emerald-600">
-                  <Check size={12} /> 是
+                  <Check size={12} /> {t("settings.yes")}
                 </span>
               ) : (
-                <span className="text-red-500">否</span>
+                <span className="text-red-500">{t("settings.no")}</span>
               )}
             </div>
             <div className="flex justify-between">
-              <span className="text-text-secondary">模式</span>
+              <span className="text-text-secondary">{t("settings.mode")}</span>
               <Badge variant="success">{configStatus.mode}</Badge>
             </div>
           </div>
@@ -206,8 +232,8 @@ export function SettingsPanel() {
 
       {/* Providers */}
       <div className="flex items-center justify-between">
-        <p className="text-sm font-medium">模型提供商</p>
-        <span className="text-xs text-text-secondary">{providerEntries.length} 个</span>
+        <p className="text-sm font-medium">{t("settings.providers")}</p>
+        <span className="text-xs text-text-secondary">{t("settings.providerCount", { count: providerEntries.length })}</span>
       </div>
 
       {providerEntries.map(([name, config]) => {
@@ -217,7 +243,7 @@ export function SettingsPanel() {
             <div className="flex items-center justify-between mb-1">
               <span className="text-sm font-semibold capitalize">{name}</span>
               <Badge variant={config._hasKey ? "success" : "warning"}>
-                {config._hasKey ? "已配置" : "未配置"}
+                {config._hasKey ? t("settings.configured") : t("settings.notConfigured")}
               </Badge>
             </div>
             {config.baseUrl && (
@@ -227,7 +253,7 @@ export function SettingsPanel() {
             )}
             {modelList.length > 0 && (
               <p className="text-[11px] text-accent">
-                {modelList.length} 个模型：
+                {t("settings.modelCount", { count: modelList.length })}
                 {modelList
                   .slice(0, 3)
                   .map((m) => (typeof m === "string" ? m : m.name || m.id))

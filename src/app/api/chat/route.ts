@@ -129,7 +129,7 @@ export async function POST(request: NextRequest) {
           if (attempt === GW_RETRIES - 1) {
             send({
               type: "error",
-              error: `Gateway 连接失败: ${err instanceof Error ? err.message : String(err)}`,
+              error: `Gateway connection failed: ${err instanceof Error ? err.message : String(err)}`,
             });
             close();
             return;
@@ -292,7 +292,7 @@ export async function POST(request: NextRequest) {
               }, delay);
               return; // don't close, wait for retry
             }
-            send({ type: "error", error: "Agent 正在忙，请稍后重试", retryable: true });
+            send({ type: "error", error: "Agent is busy, please try again later", retryable: true });
             close();
           } else {
             // If there are un-emitted text blocks before the last one, emit them as steps
@@ -329,7 +329,7 @@ export async function POST(request: NextRequest) {
 
       closeHandler = () => {
         if (!settled) {
-          send({ type: "done", text: currentStepText || latestFullText || "(连接断开)" });
+          send({ type: "done", text: currentStepText || latestFullText || "(disconnected)" });
           close();
         }
       };
