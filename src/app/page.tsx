@@ -20,6 +20,8 @@ import {
   Camera,
   X,
   RefreshCw,
+  Loader2,
+  AlertCircle,
 } from "lucide-react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
@@ -39,6 +41,7 @@ interface Message {
   msgType?: "text" | "tool";
   toolName?: string;
   images?: string[]; // image URLs for display
+  status?: "sending" | "sent" | "error"; // user message status
 }
 
 interface Attachment {
@@ -137,7 +140,7 @@ export default function HomePage() {
   const abortRef = useRef<AbortController | null>(null);
 
   // Queue system
-  const queueRef = useRef<Array<{ text: string; attachments?: Attachment[] }>>([]); // pending items
+  const queueRef = useRef<Array<{ text: string; attachments?: Attachment[]; userMsgIds: string[] }>>([]); // pending items
   const batchPlaceholderRef = useRef<string | null>(null); // current batch placeholder id
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const runningRef = useRef(false); // is an API call in progress?
@@ -167,10 +170,11 @@ export default function HomePage() {
   const pullStartY = useRef<number | null>(null);
   const [pullDistance, setPullDistance] = useState(0);
 
-  // Persist (with history limit)
+  // Persist (with history limit, strip transient status field)
   useEffect(() => {
     const limit = getSettings().chatHistoryLimit;
-    const toSave = messages.length > limit ? messages.slice(-limit) : messages;
+    const trimmed = messages.length > limit ? messages.slice(-limit) : messages;
+    const toSave = trimmed.map(({ status, ...rest }) => rest);
     localStorage.setItem("webclaw-chat", JSON.stringify(toSave));
   }, [messages]);
 
@@ -221,11 +225,24 @@ export default function HomePage() {
 
     const mergedText = items.map((i) => i.text).join("\n");
     const allAttachments = items.flatMap((i) => i.attachments || []);
+    const batchUserMsgIds = items.flatMap((i) => i.userMsgIds);
     runningRef.current = true;
     setStreaming(true);
 
     const abortController = new AbortController();
     abortRef.current = abortController;
+
+    // Helper to update user message statuses for this batch
+    const updateUserMsgStatus = (status: "sending" | "sent" | "error") => {
+      if (batchUserMsgIds.length === 0) return;
+      setMessages((prev) =>
+        prev.map((m) =>
+          m.role === "user" && m.id && batchUserMsgIds.includes(m.id)
+            ? { ...m, status }
+            : m
+        )
+      );
+    };
 
     const updatePlaceholder = (content: string) => {
       const pid = curPlaceholder!;
@@ -302,9 +319,9 @@ export default function HomePage() {
     };
 
     const isRetryableError = (msg: string) =>
-      /连接失败|Gateway|WebSocket|timeout|ECONNREFUSED|fetch failed/i.test(msg);
+      /连接失败|Gateway|WebSocket|timeout|ECONNREFUSED|fetch failed|正在忙/i.test(msg);
 
-    const MAX_CLIENT_RETRIES = 1;
+    const MAX_CLIENT_RETRIES = 2;
     let clientRetry = 0;
 
     const doFetch = async (): Promise<void> => {
@@ -391,10 +408,15 @@ export default function HomePage() {
       }
     };
 
+    let batchSuccess = false;
     try {
       await doFetch();
+      batchSuccess = true;
     } catch (err) {
-      if ((err as Error).name === "AbortError") return;
+      if ((err as Error).name === "AbortError") {
+        updateUserMsgStatus("sent");
+        return;
+      }
       const msg = (err as Error)?.message || String(err);
 
       // Auto-retry once for connection errors
@@ -404,8 +426,12 @@ export default function HomePage() {
         try {
           await new Promise((r) => setTimeout(r, 2000));
           await doFetch();
+          batchSuccess = true;
         } catch (retryErr) {
-          if ((retryErr as Error).name === "AbortError") return;
+          if ((retryErr as Error).name === "AbortError") {
+            updateUserMsgStatus("sent");
+            return;
+          }
           const retryMsg = (retryErr as Error)?.message || String(retryErr);
           console.error("[webclaw] chat retry failed:", retryMsg);
           updatePlaceholder(`连接失败: ${retryMsg}`);
@@ -415,6 +441,7 @@ export default function HomePage() {
         updatePlaceholder(`连接失败: ${msg}`);
       }
     } finally {
+      updateUserMsgStatus(batchSuccess ? "sent" : "error");
       runningRef.current = false;
       abortRef.current = null;
       setStreaming(false);
@@ -429,7 +456,8 @@ export default function HomePage() {
   // Enqueue a message: show user bubble immediately, debounce before sending
   const enqueueMessage = useCallback(
     (text: string, imageAttachments?: Attachment[]) => {
-      const userMsg: Message = { role: "user", content: text };
+      const userMsgId = nextMsgId();
+      const userMsg: Message = { role: "user", content: text, id: userMsgId, status: "sending" };
       if (imageAttachments?.length) {
         userMsg.images = imageAttachments.map((a) => a.url);
       }
@@ -457,7 +485,7 @@ export default function HomePage() {
         });
       }
 
-      queueRef.current.push({ text, attachments: imageAttachments });
+      queueRef.current.push({ text, attachments: imageAttachments, userMsgIds: [userMsgId] });
 
       // Reset debounce timer
       if (debounceRef.current) clearTimeout(debounceRef.current);
@@ -792,56 +820,64 @@ export default function HomePage() {
                 <span>{toolLabel(msg.toolName)}</span>
               </div>
             ) : (
-              <div
-                className={`max-w-[85%] px-3.5 py-2.5 rounded-2xl text-sm leading-relaxed ${
-                  msg.role === "user"
-                    ? "bg-primary text-white rounded-br-md whitespace-pre-wrap"
-                    : "bg-card text-text shadow-sm rounded-bl-md chat-md"
-                }`}
-              >
-                {msg.images && msg.images.length > 0 && (
-                  <div className="flex gap-1.5 mb-1.5 flex-wrap">
-                    {msg.images.map((url, j) => (
-                      <img
-                        key={j}
-                        src={url}
-                        alt=""
-                        className="rounded-lg max-w-[200px] max-h-[200px] object-cover cursor-pointer"
-                        onClick={() => window.open(url, "_blank")}
-                        loading="lazy"
-                      />
-                    ))}
-                  </div>
-                )}
-                {msg.content ? (
-                  msg.role === "assistant" ? (
-                    <ReactMarkdown
-                      remarkPlugins={[remarkGfm]}
-                      components={{
-                        img: ({ src, alt }) => (
-                          <img
-                            src={typeof src === "string" ? src : undefined}
-                            alt={alt || ""}
-                            className="max-w-full rounded-lg my-1 cursor-pointer"
-                            onClick={() => typeof src === "string" && window.open(src, "_blank")}
-                            loading="lazy"
-                          />
-                        ),
-                      }}
-                    >
-                      {msg.content}
-                    </ReactMarkdown>
+              <div className={msg.role === "user" ? "flex flex-col items-end gap-0.5" : ""}>
+                <div
+                  className={`max-w-[85%] px-3.5 py-2.5 rounded-2xl text-sm leading-relaxed ${
+                    msg.role === "user"
+                      ? "bg-primary text-white rounded-br-md whitespace-pre-wrap"
+                      : "bg-card text-text shadow-sm rounded-bl-md chat-md"
+                  }`}
+                >
+                  {msg.images && msg.images.length > 0 && (
+                    <div className="flex gap-1.5 mb-1.5 flex-wrap">
+                      {msg.images.map((url, j) => (
+                        <img
+                          key={j}
+                          src={url}
+                          alt=""
+                          className="rounded-lg max-w-[200px] max-h-[200px] object-cover cursor-pointer"
+                          onClick={() => window.open(url, "_blank")}
+                          loading="lazy"
+                        />
+                      ))}
+                    </div>
+                  )}
+                  {msg.content ? (
+                    msg.role === "assistant" ? (
+                      <ReactMarkdown
+                        remarkPlugins={[remarkGfm]}
+                        components={{
+                          img: ({ src, alt }) => (
+                            <img
+                              src={typeof src === "string" ? src : undefined}
+                              alt={alt || ""}
+                              className="max-w-full rounded-lg my-1 cursor-pointer"
+                              onClick={() => typeof src === "string" && window.open(src, "_blank")}
+                              loading="lazy"
+                            />
+                          ),
+                        }}
+                      >
+                        {msg.content}
+                      </ReactMarkdown>
+                    ) : (
+                      msg.content
+                    )
+                  ) : msg.role === "assistant" && msg.id ? (
+                    <span className="thinking-dots text-text-secondary">
+                      <span>.</span>
+                      <span>.</span>
+                      <span>.</span>
+                    </span>
                   ) : (
-                    msg.content
-                  )
-                ) : msg.role === "assistant" && msg.id ? (
-                  <span className="thinking-dots text-text-secondary">
-                    <span>.</span>
-                    <span>.</span>
-                    <span>.</span>
-                  </span>
-                ) : (
-                  ""
+                    ""
+                  )}
+                </div>
+                {msg.role === "user" && msg.status === "sending" && (
+                  <Loader2 size={12} className="animate-spin text-primary/50 mr-1" />
+                )}
+                {msg.role === "user" && msg.status === "error" && (
+                  <AlertCircle size={12} className="text-red-400 mr-1" />
                 )}
               </div>
             )}

@@ -131,9 +131,12 @@ export async function POST(request: NextRequest) {
         }
       }
 
-      const idempotencyKey = randomUUID();
+      let idempotencyKey = randomUUID();
       let myRunId: string | null = null;
       let gotDelta = false;
+      let agentBusyRetries = 0;
+      const AGENT_BUSY_MAX_RETRIES = 2;
+      const AGENT_BUSY_DELAY = 3000;
 
       // Step detection state
       const seenToolIds = new Set<string>();
@@ -234,6 +237,44 @@ export async function POST(request: NextRequest) {
             : null;
 
           if (!finalText && !latestFullText && !gotDelta) {
+            // Agent busy — auto-retry
+            if (agentBusyRetries < AGENT_BUSY_MAX_RETRIES) {
+              agentBusyRetries++;
+              console.log(`[chat] agent busy, retry ${agentBusyRetries}/${AGENT_BUSY_MAX_RETRIES} in ${AGENT_BUSY_DELAY}ms`);
+              send({ type: "thinking" }); // keep client waiting
+              setTimeout(async () => {
+                try {
+                  // Reset state for retry
+                  gotDelta = false;
+                  myRunId = null;
+                  earlyEvents.length = 0;
+                  idempotencyKey = randomUUID();
+                  const retryParams: Record<string, unknown> = {
+                    sessionKey: SESSION_KEY,
+                    message: lastUserMsg.content,
+                    deliver: false,
+                    idempotencyKey,
+                  };
+                  if (body.attachments?.length) {
+                    retryParams.attachments = body.attachments;
+                  }
+                  const res = await gw.request("chat.send", retryParams);
+                  const r = res as Record<string, unknown> | undefined;
+                  if (r?.runId) {
+                    myRunId = r.runId as string;
+                    for (const evt of earlyEvents) {
+                      const rid = evt.runId as string | undefined;
+                      if (!rid || rid === myRunId) processEvent(evt);
+                    }
+                    earlyEvents.length = 0;
+                  }
+                } catch (err) {
+                  send({ type: "error", error: err instanceof Error ? err.message : String(err) });
+                  close();
+                }
+              }, AGENT_BUSY_DELAY);
+              return; // don't close, wait for retry
+            }
             send({ type: "error", error: "Agent 正在忙，请稍后重试" });
             close();
           } else {
