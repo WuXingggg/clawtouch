@@ -41,7 +41,7 @@ interface Message {
   msgType?: "text" | "tool";
   toolName?: string;
   images?: string[]; // image URLs for display
-  status?: "sending" | "sent" | "error"; // user message status
+  status?: "sending" | "sent" | "error" | "queued"; // user message status
 }
 
 interface Attachment {
@@ -54,7 +54,7 @@ interface Attachment {
 
 type PanelType = "tokens" | "skills" | "cron" | "settings" | null;
 
-const DEBOUNCE_MS = 1500;
+const DEBOUNCE_MS = 500;
 
 let msgIdCounter = Date.now();
 function nextMsgId() {
@@ -233,7 +233,7 @@ export default function HomePage() {
     abortRef.current = abortController;
 
     // Helper to update user message statuses for this batch
-    const updateUserMsgStatus = (status: "sending" | "sent" | "error") => {
+    const updateUserMsgStatus = (status: "sending" | "sent" | "error" | "queued") => {
       if (batchUserMsgIds.length === 0) return;
       setMessages((prev) =>
         prev.map((m) =>
@@ -402,7 +402,9 @@ export default function HomePage() {
             streamDone = true;
             break;
           } else if (event.type === "error") {
-            throw new Error(event.error as string);
+            const err = new Error(event.error as string);
+            if (event.retryable) (err as unknown as Record<string, boolean>).retryable = true;
+            throw err;
           }
         }
       }
@@ -418,9 +420,31 @@ export default function HomePage() {
         return;
       }
       const msg = (err as Error)?.message || String(err);
+      const isRetryable = (err as unknown as Record<string, boolean>)?.retryable;
 
-      // Auto-retry once for connection errors
-      if (isRetryableError(msg) && clientRetry < MAX_CLIENT_RETRIES) {
+      // Auto-retry for agent-busy (retryable) errors with escalating backoff
+      if (isRetryable && clientRetry < MAX_CLIENT_RETRIES) {
+        clientRetry++;
+        const delay = 3000 * clientRetry;
+        console.warn(`[webclaw] agent busy, requeue in ${delay}ms (${clientRetry}/${MAX_CLIENT_RETRIES})`);
+        updatePlaceholder("排队中...");
+        updateUserMsgStatus("queued");
+        try {
+          await new Promise((r) => setTimeout(r, delay));
+          updatePlaceholder("");
+          await doFetch();
+          batchSuccess = true;
+        } catch (retryErr) {
+          if ((retryErr as Error).name === "AbortError") {
+            updateUserMsgStatus("sent");
+            return;
+          }
+          const retryMsg = (retryErr as Error)?.message || String(retryErr);
+          console.error("[webclaw] agent busy requeue failed:", retryMsg);
+          updatePlaceholder(`连接失败: ${retryMsg}`);
+        }
+      } else if (isRetryableError(msg) && clientRetry < MAX_CLIENT_RETRIES) {
+        // Auto-retry for connection errors
         clientRetry++;
         console.warn(`[webclaw] retrying chat (${clientRetry}/${MAX_CLIENT_RETRIES})...`);
         try {
@@ -531,8 +555,7 @@ export default function HomePage() {
       clearTimeout(debounceRef.current);
       debounceRef.current = null;
     }
-    // Small delay to let multiple rapid Enter-key presses accumulate
-    setTimeout(() => processBatch(), 50);
+    queueMicrotask(() => processBatch());
   }, [input, attachments, enqueueMessage, processBatch]);
 
   // Send a message programmatically (used by panels)
@@ -544,7 +567,7 @@ export default function HomePage() {
         clearTimeout(debounceRef.current);
         debounceRef.current = null;
       }
-      setTimeout(() => processBatch(), 50);
+      queueMicrotask(() => processBatch());
     },
     [enqueueMessage, processBatch]
   );
@@ -820,7 +843,7 @@ export default function HomePage() {
                 <span>{toolLabel(msg.toolName)}</span>
               </div>
             ) : (
-              <div className={msg.role === "user" ? "flex flex-col items-end gap-0.5" : ""}>
+              <div className={msg.role === "user" ? "flex flex-col items-end gap-0.5 w-full" : ""}>
                 <div
                   className={`max-w-[85%] px-3.5 py-2.5 rounded-2xl text-sm leading-relaxed ${
                     msg.role === "user"
@@ -875,6 +898,9 @@ export default function HomePage() {
                 </div>
                 {msg.role === "user" && msg.status === "sending" && (
                   <Loader2 size={12} className="animate-spin text-primary/50 mr-1" />
+                )}
+                {msg.role === "user" && msg.status === "queued" && (
+                  <span className="text-[10px] text-text-secondary mr-1">排队中</span>
                 )}
                 {msg.role === "user" && msg.status === "error" && (
                   <AlertCircle size={12} className="text-red-400 mr-1" />

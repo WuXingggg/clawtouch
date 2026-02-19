@@ -135,8 +135,8 @@ export async function POST(request: NextRequest) {
       let myRunId: string | null = null;
       let gotDelta = false;
       let agentBusyRetries = 0;
-      const AGENT_BUSY_MAX_RETRIES = 2;
-      const AGENT_BUSY_DELAY = 3000;
+      const AGENT_BUSY_MAX_RETRIES = 3;
+      const AGENT_BUSY_DELAYS = [2000, 3000, 5000];
 
       // Step detection state
       const seenToolIds = new Set<string>();
@@ -236,11 +236,12 @@ export async function POST(request: NextRequest) {
             ? textBlocks[textBlocks.length - 1].text
             : null;
 
-          if (!finalText && !latestFullText && !gotDelta) {
+          if (!finalText && !latestFullText && !gotDelta && seenToolIds.size === 0 && seenImageHashes.size === 0) {
             // Agent busy — auto-retry
             if (agentBusyRetries < AGENT_BUSY_MAX_RETRIES) {
               agentBusyRetries++;
-              console.log(`[chat] agent busy, retry ${agentBusyRetries}/${AGENT_BUSY_MAX_RETRIES} in ${AGENT_BUSY_DELAY}ms`);
+              const delay = AGENT_BUSY_DELAYS[agentBusyRetries - 1] || 5000;
+              console.log(`[chat] agent busy, retry ${agentBusyRetries}/${AGENT_BUSY_MAX_RETRIES} in ${delay}ms`);
               send({ type: "thinking" }); // keep client waiting
               setTimeout(async () => {
                 try {
@@ -248,6 +249,11 @@ export async function POST(request: NextRequest) {
                   gotDelta = false;
                   myRunId = null;
                   earlyEvents.length = 0;
+                  seenToolIds.clear();
+                  seenImageHashes.clear();
+                  emittedStepCount = 0;
+                  currentStepText = "";
+                  latestFullText = "";
                   idempotencyKey = randomUUID();
                   const retryParams: Record<string, unknown> = {
                     sessionKey: SESSION_KEY,
@@ -272,10 +278,10 @@ export async function POST(request: NextRequest) {
                   send({ type: "error", error: err instanceof Error ? err.message : String(err) });
                   close();
                 }
-              }, AGENT_BUSY_DELAY);
+              }, delay);
               return; // don't close, wait for retry
             }
-            send({ type: "error", error: "Agent 正在忙，请稍后重试" });
+            send({ type: "error", error: "Agent 正在忙，请稍后重试", retryable: true });
             close();
           } else {
             // If there are un-emitted text blocks before the last one, emit them as steps
