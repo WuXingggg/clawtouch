@@ -22,6 +22,9 @@ import {
   RefreshCw,
   Loader2,
   AlertCircle,
+  Copy,
+  Trash,
+  RotateCcw,
 } from "lucide-react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
@@ -164,6 +167,16 @@ export default function HomePage() {
 
   // Textarea auto-grow
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+
+  // Context menu (long-press)
+  const [contextMenu, setContextMenu] = useState<{
+    msgId: string;
+    msgRole: "user" | "assistant";
+    x: number;
+    y: number;
+  } | null>(null);
+  const longPressRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const longPressMoved = useRef(false);
 
   // Pull-to-refresh
   const [pullRefreshing, setPullRefreshing] = useState(false);
@@ -736,6 +749,80 @@ export default function HomePage() {
     pullStartY.current = null;
   }, [pullDistance, pullRefreshing, mutate]);
 
+  // Long-press context menu handlers
+  const handleMsgTouchStart = useCallback((e: React.TouchEvent, msg: Message) => {
+    if (!msg.id || !msg.content || msg.msgType === "tool") return;
+    longPressMoved.current = false;
+    const touch = e.touches[0];
+    const x = touch.clientX;
+    const y = touch.clientY;
+    longPressRef.current = setTimeout(() => {
+      if (!longPressMoved.current) {
+        // Haptic feedback if available
+        if (navigator.vibrate) navigator.vibrate(20);
+        setContextMenu({ msgId: msg.id!, msgRole: msg.role, x, y });
+      }
+    }, 500);
+  }, []);
+
+  const handleMsgTouchMove = useCallback(() => {
+    longPressMoved.current = true;
+    if (longPressRef.current) {
+      clearTimeout(longPressRef.current);
+      longPressRef.current = null;
+    }
+  }, []);
+
+  const handleMsgTouchEnd = useCallback(() => {
+    if (longPressRef.current) {
+      clearTimeout(longPressRef.current);
+      longPressRef.current = null;
+    }
+  }, []);
+
+  const handleCopyMsg = useCallback(() => {
+    if (!contextMenu) return;
+    const msg = messages.find((m) => m.id === contextMenu.msgId);
+    if (msg?.content) {
+      navigator.clipboard.writeText(msg.content).catch(() => {
+        // Fallback for older browsers
+        const ta = document.createElement("textarea");
+        ta.value = msg.content;
+        ta.style.position = "fixed";
+        ta.style.opacity = "0";
+        document.body.appendChild(ta);
+        ta.select();
+        document.execCommand("copy");
+        document.body.removeChild(ta);
+      });
+    }
+    setContextMenu(null);
+  }, [contextMenu, messages]);
+
+  const handleDeleteMsg = useCallback(() => {
+    if (!contextMenu) return;
+    setMessages((prev) => prev.filter((m) => m.id !== contextMenu.msgId));
+    setContextMenu(null);
+  }, [contextMenu]);
+
+  const handleResendMsg = useCallback(() => {
+    if (!contextMenu) return;
+    const msg = messages.find((m) => m.id === contextMenu.msgId);
+    if (msg?.content && msg.role === "user") {
+      setInput(msg.content);
+    }
+    setContextMenu(null);
+  }, [contextMenu, messages]);
+
+  // Dismiss context menu on scroll or outside tap
+  useEffect(() => {
+    if (!contextMenu) return;
+    const dismiss = () => setContextMenu(null);
+    const el = listRef.current;
+    el?.addEventListener("scroll", dismiss, { passive: true });
+    return () => el?.removeEventListener("scroll", dismiss);
+  }, [contextMenu]);
+
   const toolbarItems = [
     {
       key: "status" as const,
@@ -845,11 +932,20 @@ export default function HomePage() {
             ) : (
               <div className={msg.role === "user" ? "flex flex-col items-end gap-0.5 w-full" : ""}>
                 <div
-                  className={`max-w-[85%] px-3.5 py-2.5 rounded-2xl text-sm leading-relaxed ${
+                  className={`max-w-[85%] px-3.5 py-2.5 rounded-2xl text-sm leading-relaxed select-none ${
                     msg.role === "user"
                       ? "bg-primary text-white rounded-br-md whitespace-pre-wrap"
                       : "bg-card text-text shadow-sm rounded-bl-md chat-md"
-                  }`}
+                  }${contextMenu?.msgId === msg.id ? " ring-2 ring-primary/40" : ""}`}
+                  onTouchStart={(e) => handleMsgTouchStart(e, msg)}
+                  onTouchMove={handleMsgTouchMove}
+                  onTouchEnd={handleMsgTouchEnd}
+                  onContextMenu={(e) => {
+                    e.preventDefault();
+                    if (msg.id && msg.content && msg.msgType !== "tool") {
+                      setContextMenu({ msgId: msg.id, msgRole: msg.role, x: e.clientX, y: e.clientY });
+                    }
+                  }}
                 >
                   {msg.images && msg.images.length > 0 && (
                     <div className="flex gap-1.5 mb-1.5 flex-wrap">
@@ -910,6 +1006,44 @@ export default function HomePage() {
           </div>
         ))}
       </div>
+
+      {/* Context menu overlay */}
+      {contextMenu && (
+        <>
+          <div className="fixed inset-0 z-40" onClick={() => setContextMenu(null)} />
+          <div
+            className="fixed z-50 bg-card rounded-xl shadow-lg border border-border py-1 min-w-[140px] animate-scale-in"
+            style={{
+              left: Math.min(contextMenu.x, window.innerWidth - 160),
+              top: Math.max(8, Math.min(contextMenu.y - 60, window.innerHeight - 200)),
+            }}
+          >
+            <button
+              onClick={handleCopyMsg}
+              className="flex items-center gap-2.5 w-full px-4 py-2.5 text-sm text-text hover:bg-slate-50 active:bg-slate-100"
+            >
+              <Copy size={16} className="text-text-secondary" />
+              复制
+            </button>
+            {contextMenu.msgRole === "user" && (
+              <button
+                onClick={handleResendMsg}
+                className="flex items-center gap-2.5 w-full px-4 py-2.5 text-sm text-text hover:bg-slate-50 active:bg-slate-100"
+              >
+                <RotateCcw size={16} className="text-text-secondary" />
+                重新编辑
+              </button>
+            )}
+            <button
+              onClick={handleDeleteMsg}
+              className="flex items-center gap-2.5 w-full px-4 py-2.5 text-sm text-red-500 hover:bg-slate-50 active:bg-slate-100"
+            >
+              <Trash size={16} />
+              删除
+            </button>
+          </div>
+        </>
+      )}
 
       <div className="flex-shrink-0 border-t border-border bg-card">
         <div className="flex gap-2 px-4 pt-2 pb-1 overflow-x-auto no-scrollbar">
