@@ -6,9 +6,7 @@ import { homedir } from "os";
 
 const GATEWAY_WS_URL =
   process.env.OPENCLAW_GATEWAY_WS_URL || "ws://127.0.0.1:18789";
-const GATEWAY_TOKEN =
-  process.env.OPENCLAW_GATEWAY_TOKEN ||
-  "8eba7157f01cc07c6e19e8439149edeb6148b758cd20dc69";
+const GATEWAY_TOKEN = process.env.OPENCLAW_GATEWAY_TOKEN || "";
 
 interface DeviceIdentity {
   deviceId: string;

@@ -2,13 +2,13 @@ import type { Metadata, Viewport } from "next";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "WebClaw",
-  description: "OpenClaw 移动端管理面板",
+  title: "ClawTouch",
+  description: "Mobile-first control panel for OpenClaw agents",
   manifest: "/manifest.json",
   appleWebApp: {
     capable: true,
     statusBarStyle: "default",
-    title: "WebClaw",
+    title: "ClawTouch",
   },
 };
 

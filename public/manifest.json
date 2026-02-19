@@ -1,7 +1,7 @@
 {
-  "name": "WebClaw",
-  "short_name": "WebClaw",
-  "description": "OpenClaw 移动端管理面板",
+  "name": "ClawTouch",
+  "short_name": "ClawTouch",
+  "description": "Mobile-first control panel for OpenClaw agents",
   "start_url": "/",
   "display": "standalone",
   "background_color": "#f8fafc",

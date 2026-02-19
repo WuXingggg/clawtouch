@@ -1,4 +1,4 @@
-const STORAGE_KEY = "webclaw-settings";
+const STORAGE_KEY = "clawtouch-settings";
 
 export interface Settings {
   contextTurns: number;

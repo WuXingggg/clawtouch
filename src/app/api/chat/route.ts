@@ -4,7 +4,7 @@ import { randomUUID } from "crypto";
 import { writeFile, mkdir } from "fs/promises";
 import { join } from "path";
 
-const SESSION_KEY = process.env.OPENCLAW_SESSION_KEY || "agent:main:webclaw";
+const SESSION_KEY = process.env.OPENCLAW_SESSION_KEY || "agent:main:clawtouch";
 const UPLOAD_DIR = join(process.cwd(), "public", "uploads");
 
 // ── Content block parsing ──
