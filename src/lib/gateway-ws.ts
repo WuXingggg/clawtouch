@@ -71,10 +71,13 @@ export interface GatewayConnection {
   ws: WebSocket;
   request: (
     method: string,
-    params: Record<string, unknown>
+    params: Record<string, unknown>,
+    timeoutMs?: number
   ) => Promise<unknown>;
   onEvent: (handler: (event: string, payload: unknown) => void) => void;
+  offEvent: (handler: (event: string, payload: unknown) => void) => void;
   onClose: (handler: () => void) => void;
+  offClose: (handler: () => void) => void;
   close: () => void;
 }
 
@@ -99,11 +102,21 @@ function createRawConnection(): Promise<GatewayConnection> {
 
     const sendReq = (
       method: string,
-      params: Record<string, unknown>
+      params: Record<string, unknown>,
+      timeoutMs = 15000
     ): Promise<unknown> => {
       const id = nextId();
       return new Promise((res, rej) => {
-        pending.set(id, { resolve: res, reject: rej });
+        let timedOut = false;
+        const timer = setTimeout(() => {
+          timedOut = true;
+          pending.delete(id);
+          rej(new Error(`RPC timeout: ${method}`));
+        }, timeoutMs);
+        pending.set(id, {
+          resolve: (v) => { if (!timedOut) { clearTimeout(timer); res(v); } },
+          reject: (e) => { if (!timedOut) { clearTimeout(timer); rej(e); } },
+        });
         ws.send(JSON.stringify({ type: "req", id, method, params }));
       });
     };
@@ -155,7 +168,15 @@ function createRawConnection(): Promise<GatewayConnection> {
       ws,
       request: sendReq,
       onEvent: (handler) => { eventHandlers.push(handler); },
+      offEvent: (handler) => {
+        const idx = eventHandlers.indexOf(handler);
+        if (idx >= 0) eventHandlers.splice(idx, 1);
+      },
       onClose: (handler) => { closeHandlers.push(handler); },
+      offClose: (handler) => {
+        const idx = closeHandlers.indexOf(handler);
+        if (idx >= 0) closeHandlers.splice(idx, 1);
+      },
       close: () => ws.close(),
     };
 

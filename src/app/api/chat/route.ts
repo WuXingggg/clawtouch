@@ -92,11 +92,17 @@ export async function POST(request: NextRequest) {
         } catch { /* controller already closed */ }
       };
 
+      // Handler refs for cleanup (set after gw connect)
+      let eventHandler: ((event: string, payload: unknown) => void) | null = null;
+      let closeHandler: (() => void) | null = null;
+
       const cleanup = () => {
         if (settled) return;
         settled = true;
         clearTimeout(timeout);
-        gw?.close();
+        // Remove our handlers from the shared connection (don't close it!)
+        if (gw && eventHandler) gw.offEvent(eventHandler);
+        if (gw && closeHandler) gw.offClose(closeHandler);
       };
 
       const close = () => {
@@ -247,7 +253,7 @@ export async function POST(request: NextRequest) {
                 try {
                   // Abort any lingering run before retrying
                   try {
-                    await gw.request("chat.abort", { sessionKey: SESSION_KEY });
+                    await gw.request("chat.abort", { sessionKey: SESSION_KEY }, 5000);
                   } catch { /* ignore abort errors */ }
 
                   // Reset state for retry
@@ -269,7 +275,7 @@ export async function POST(request: NextRequest) {
                   if (body.attachments?.length) {
                     retryParams.attachments = body.attachments;
                   }
-                  const res = await gw.request("chat.send", retryParams);
+                  const res = await gw.request("chat.send", retryParams, 30000);
                   const r = res as Record<string, unknown> | undefined;
                   if (r?.runId) {
                     myRunId = r.runId as string;
@@ -321,14 +327,15 @@ export async function POST(request: NextRequest) {
         }
       };
 
-      gw.onClose(() => {
+      closeHandler = () => {
         if (!settled) {
           send({ type: "done", text: currentStepText || latestFullText || "(连接断开)" });
           close();
         }
-      });
+      };
+      gw.onClose(closeHandler);
 
-      gw.onEvent((event, payload) => {
+      eventHandler = (event: string, payload: unknown) => {
         if (event !== "chat") return;
         const p = payload as Record<string, unknown>;
         if (!p) return;
@@ -348,7 +355,8 @@ export async function POST(request: NextRequest) {
 
         if (eventRunId && eventRunId !== myRunId) return;
         processEvent(p);
-      });
+      };
+      gw.onEvent(eventHandler);
 
       try {
         const sendParams: Record<string, unknown> = {
@@ -360,7 +368,7 @@ export async function POST(request: NextRequest) {
         if (body.attachments?.length) {
           sendParams.attachments = body.attachments;
         }
-        const res = await gw.request("chat.send", sendParams);
+        const res = await gw.request("chat.send", sendParams, 30000);
         const r = res as Record<string, unknown> | undefined;
         if (r?.runId) {
           myRunId = r.runId as string;
