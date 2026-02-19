@@ -58,7 +58,6 @@ export async function POST(request: NextRequest) {
   let body: {
     messages?: unknown[];
     attachments?: Array<{ mimeType: string; fileName: string; content: string }>;
-    model?: string;
   };
   try {
     body = await request.json();
@@ -284,9 +283,6 @@ export async function POST(request: NextRequest) {
                   if (body.attachments?.length) {
                     retryParams.attachments = body.attachments;
                   }
-                  if (body.model) {
-                    retryParams.model = body.model;
-                  }
                   const res = await gw.request("chat.send", retryParams, 30000);
                   const r = res as Record<string, unknown> | undefined;
                   if (r?.runId) {
@@ -379,9 +375,6 @@ export async function POST(request: NextRequest) {
         };
         if (body.attachments?.length) {
           sendParams.attachments = body.attachments;
-        }
-        if (body.model) {
-          sendParams.model = body.model;
         }
         const tRpc = Date.now();
         const res = await gw.request("chat.send", sendParams, 30000);
