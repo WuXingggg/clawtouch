@@ -6,6 +6,14 @@ import { join } from "path";
 const AGENTS_DIR =
   process.env.OPENCLAW_AGENTS || join(homedir(), ".openclaw", "agents");
 
+/** Format a Date as YYYY-MM-DD in local timezone */
+function localDateKey(d: Date): string {
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, "0");
+  const day = String(d.getDate()).padStart(2, "0");
+  return `${y}-${m}-${day}`;
+}
+
 interface TokenEntry {
   date: string;
   inputTokens: number;
@@ -74,7 +82,7 @@ export async function getTokenStats(days: number = 30): Promise<TokenStats> {
 
             if (input === 0 && output === 0) continue;
 
-            const dateKey = eventDate.toISOString().slice(0, 10);
+            const dateKey = localDateKey(eventDate);
             totalInput += input;
             totalOutput += output;
             totalCacheRead += cacheRead;
@@ -102,7 +110,7 @@ export async function getTokenStats(days: number = 30): Promise<TokenStats> {
     // agents dir may not exist
   }
 
-  const todayKey = new Date().toISOString().slice(0, 10);
+  const todayKey = localDateKey(new Date());
   const todayEntry = dailyMap.get(todayKey);
 
   const daily = Array.from(dailyMap.values()).sort((a, b) =>
