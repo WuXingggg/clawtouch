@@ -56,12 +56,30 @@ function parseContentBlocks(message: unknown): ContentBlock[] {
   return [];
 }
 
+// ── Ensure session has verbose=full for tool events ──
+let verbosePatched = false;
+
+async function ensureVerbose(gw: Awaited<ReturnType<typeof connectToGateway>>) {
+  if (verbosePatched) return;
+  try {
+    await gw.request("sessions.patch", {
+      key: SESSION_KEY,
+      verboseLevel: "full",
+    }, 5000);
+    verbosePatched = true;
+    console.log("[chat] session verbose=full set");
+  } catch (err) {
+    console.warn("[chat] failed to set verbose:", err instanceof Error ? err.message : err);
+  }
+}
+
 // ── Main handler ──
 
 export async function POST(request: NextRequest) {
   let body: {
     messages?: unknown[];
     attachments?: Array<{ mimeType: string; fileName: string; content: string }>;
+    model?: string;
   };
   try {
     body = await request.json();
@@ -143,6 +161,9 @@ export async function POST(request: NextRequest) {
       }
       console.log(`[chat] gateway connected in ${Date.now() - t0}ms`);
 
+      // Ensure verbose mode for tool event streaming
+      await ensureVerbose(gw);
+
       let idempotencyKey = randomUUID();
       let myRunId: string | null = null;
       let gotDelta = false;
@@ -207,7 +228,7 @@ export async function POST(request: NextRequest) {
             send({ type: "thinking_delta", text: newThinking });
           }
 
-          // Detect new tool calls → emit step boundary
+          // Detect new tool calls from content blocks (if model includes them)
           for (const tc of toolBlocks) {
             if (seenToolIds.has(tc.id)) continue;
             seenToolIds.add(tc.id);
@@ -357,6 +378,34 @@ export async function POST(request: NextRequest) {
       gw.onClose(closeHandler);
 
       eventHandler = (event: string, payload: unknown) => {
+        // Handle agent tool events (from verbose mode)
+        if (event === "agent") {
+          const p = payload as Record<string, unknown>;
+          if (!p) return;
+          const eventRunId = p.runId as string | undefined;
+          if (myRunId && eventRunId && eventRunId !== myRunId) return;
+
+          if (p.stream === "tool") {
+            const data = (p.data || {}) as Record<string, unknown>;
+            const phase = data.phase as string || "";
+            const toolCallId = data.toolCallId as string || "";
+            const toolName = data.name as string || "tool";
+
+            if (phase === "start" && toolCallId) {
+              // Emit step boundary for any pending text
+              if (currentStepText) {
+                send({ type: "step", text: currentStepText });
+                currentStepText = "";
+              }
+              // Emit tool event
+              const args = data.args as Record<string, unknown> | undefined;
+              send({ type: "tool", name: toolName, args });
+              seenToolIds.add(toolCallId);
+            }
+          }
+          return;
+        }
+
         if (event !== "chat") return;
         const p = payload as Record<string, unknown>;
         if (!p) return;
@@ -388,6 +437,9 @@ export async function POST(request: NextRequest) {
         };
         if (body.attachments?.length) {
           sendParams.attachments = body.attachments;
+        }
+        if (body.model) {
+          sendParams.model = body.model;
         }
         const tRpc = Date.now();
         const res = await gw.request("chat.send", sendParams, 30000);

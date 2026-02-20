@@ -150,7 +150,7 @@ function createRawConnection(): Promise<GatewayConnection> {
         },
         role,
         scopes,
-        caps: [],
+        caps: ["tool-events"],
         auth: { token: GATEWAY_TOKEN },
         device: {
           id: device.deviceId,
