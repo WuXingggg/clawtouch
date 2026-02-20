@@ -26,7 +26,9 @@ import {
   Trash,
   RotateCcw,
   ChevronDown,
+  ChevronRight,
   Brain,
+  Wrench,
 } from "lucide-react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
@@ -63,6 +65,71 @@ function ThinkingBlock({ thinking, msgId }: { thinking: string; msgId: string })
         <div className="mt-1 pl-4 border-l-2 border-purple-300/30 text-xs text-text-secondary/80 whitespace-pre-wrap leading-relaxed max-h-[300px] overflow-y-auto">
           {thinking}
         </div>
+      )}
+    </div>
+  );
+}
+
+function ToolEventsBlock({ tools }: { tools: Message[] }) {
+  const { t } = useT();
+  const [expanded, setExpanded] = useState(false);
+  const count = tools.length;
+  const isRunning = tools.some((m) => !m.content && m.msgType === "tool");
+
+  return (
+    <div className="my-1">
+      <button
+        onClick={() => setExpanded(!expanded)}
+        className="flex items-center gap-1.5 text-xs text-text-secondary/80 hover:text-text-secondary transition-colors py-1"
+      >
+        <Wrench size={12} className={isRunning ? "animate-spin text-blue-400" : "text-slate-400"} />
+        <span>{t("tool.events", { count: String(count) })}</span>
+        <ChevronDown
+          size={12}
+          className={`transition-transform ${expanded ? "rotate-180" : ""}`}
+        />
+      </button>
+      {expanded && (
+        <div className="ml-1 mt-1 space-y-2">
+          {tools.map((tool, i) => (
+            <ToolEventItem key={tool.id || i} tool={tool} />
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function ToolEventItem({ tool }: { tool: Message }) {
+  const { t } = useT();
+  const [argsExpanded, setArgsExpanded] = useState(false);
+  const toolLabel = tool.toolName
+    ? (TOOL_KEYS[tool.toolName] ? t(TOOL_KEYS[tool.toolName]) : tool.toolName)
+    : t("tool.default");
+
+  return (
+    <div className="border-l-2 border-slate-200 pl-3">
+      <div className="flex items-center justify-between">
+        <button
+          onClick={() => tool.toolArgs && setArgsExpanded(!argsExpanded)}
+          className="flex items-center gap-1.5 text-xs text-text-secondary"
+        >
+          <ChevronRight
+            size={10}
+            className={`transition-transform ${argsExpanded ? "rotate-90" : ""} ${tool.toolArgs ? "" : "invisible"}`}
+          />
+          <span className="font-medium text-text/80">{t("tool.event")}</span>
+          <span className="text-text-secondary/60">·</span>
+          <span>{toolLabel}</span>
+        </button>
+        {tool.toolTime && (
+          <span className="text-[10px] text-text-secondary/50 ml-2">{tool.toolTime}</span>
+        )}
+      </div>
+      {argsExpanded && tool.toolArgs && (
+        <pre className="mt-1 ml-4 text-[11px] text-text-secondary/70 bg-slate-50 rounded-lg px-2.5 py-1.5 overflow-x-auto max-h-[200px] overflow-y-auto whitespace-pre-wrap break-all">
+          {JSON.stringify(tool.toolArgs, null, 2)}
+        </pre>
       )}
     </div>
   );
@@ -431,16 +498,37 @@ function HomeContent() {
           </div>
         )}
 
-        {messages.map((msg, i) => (
+        {(() => {
+          // Group consecutive tool messages for collapsed display
+          const groups: Array<{ type: "tool-group"; tools: Message[] } | { type: "msg"; msg: Message; idx: number }> = [];
+          for (let i = 0; i < messages.length; i++) {
+            const msg = messages[i];
+            if (msg.msgType === "tool") {
+              const last = groups[groups.length - 1];
+              if (last && last.type === "tool-group") {
+                last.tools.push(msg);
+              } else {
+                groups.push({ type: "tool-group", tools: [msg] });
+              }
+            } else {
+              groups.push({ type: "msg", msg, idx: i });
+            }
+          }
+          return groups.map((group, gi) => {
+            if (group.type === "tool-group") {
+              return (
+                <div key={`tg-${gi}`} className="flex justify-start">
+                  <ToolEventsBlock tools={group.tools} />
+                </div>
+              );
+            }
+            const { msg, idx: i } = group;
+            return (
           <div
             key={msg.id || i}
             className={`flex ${msg.role === "user" ? "justify-end" : "justify-start"}`}
           >
-            {msg.msgType === "tool" ? (
-              <div className="flex items-center gap-1.5 px-2 py-1 text-xs text-text-secondary animate-pulse">
-                <span>{msg.toolName ? (TOOL_KEYS[msg.toolName] ? t(TOOL_KEYS[msg.toolName]) : t("tool.using", { name: msg.toolName })) : t("tool.default")}</span>
-              </div>
-            ) : (
+            {(
               <div className={msg.role === "user" ? "flex flex-col items-end gap-0.5 w-full" : ""}>
                 <div
                   className={`max-w-[85%] px-3.5 py-2.5 rounded-2xl text-sm leading-relaxed select-none ${
@@ -516,7 +604,9 @@ function HomeContent() {
               </div>
             )}
           </div>
-        ))}
+            );
+          });
+        })()}
         <div ref={bottomRef} />
       </div>
 

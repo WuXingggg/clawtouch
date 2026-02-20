@@ -4,12 +4,20 @@ import { useState, useRef, useEffect, useCallback } from "react";
 import { getSettings } from "@/lib/settings";
 import { useT } from "@/lib/i18n";
 
+export interface ToolEvent {
+  name: string;
+  args?: Record<string, unknown>;
+  time?: string;
+}
+
 export interface Message {
   role: "user" | "assistant";
   content: string;
   id?: string;
   msgType?: "text" | "tool";
   toolName?: string;
+  toolArgs?: Record<string, unknown>;
+  toolTime?: string;
   images?: string[];
   thinking?: string;
   status?: "sending" | "sent" | "error" | "queued";
@@ -150,10 +158,11 @@ export function useChat() {
       });
     };
 
-    const insertToolIndicator = (name: string) => {
+    const insertToolIndicator = (name: string, args?: Record<string, unknown>) => {
       const oldId = curPlaceholder!;
       const toolId = nextMsgId();
       const newId = nextMsgId();
+      const toolTime = new Date().toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false });
       curPlaceholder = newId;
       setMessages((prev) => {
         const idx = prev.findIndex((m) => m.id === oldId);
@@ -167,6 +176,8 @@ export function useChat() {
             id: toolId,
             msgType: "tool",
             toolName: name,
+            toolArgs: args,
+            toolTime,
           };
           updated.splice(idx + 1, 0, {
             role: "assistant",
@@ -183,6 +194,8 @@ export function useChat() {
               id: toolId,
               msgType: "tool",
               toolName: name,
+              toolArgs: args,
+              toolTime,
             },
             {
               role: "assistant",
@@ -259,7 +272,7 @@ export function useChat() {
           } else if (event.type === "step") {
             finalizeAndCreateNew((event.text as string) || "");
           } else if (event.type === "tool") {
-            insertToolIndicator((event.name as string) || "");
+            insertToolIndicator((event.name as string) || "", event.args as Record<string, unknown> | undefined);
           } else if (event.type === "image") {
             const url = event.url as string;
             if (url) {

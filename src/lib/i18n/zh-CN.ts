@@ -43,6 +43,8 @@ const zhCN = {
   "tool.Bash": "执行命令...",
   "tool.list_files": "浏览文件...",
   "tool.using": "使用 {name}...",
+  "tool.events": "工具事件 · 共 {count} 条",
+  "tool.event": "工具事件",
 
   // -- TokenPanel --
   "tokens.days7": "7天",

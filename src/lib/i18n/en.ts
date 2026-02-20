@@ -43,6 +43,8 @@ const en = {
   "tool.Bash": "Running command...",
   "tool.list_files": "Browsing files...",
   "tool.using": "Using {name}...",
+  "tool.events": "Tool Events · {count} total",
+  "tool.event": "Tool Event",
 
   // -- TokenPanel --
   "tokens.days7": "7d",

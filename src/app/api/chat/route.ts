@@ -11,7 +11,7 @@ const UPLOAD_DIR = join(process.cwd(), "public", "uploads");
 
 interface TextBlock { type: "text"; text: string }
 interface ThinkingBlock { type: "thinking"; thinking: string }
-interface ToolCallBlock { type: "toolCall"; id: string; name: string }
+interface ToolCallBlock { type: "toolCall"; id: string; name: string; arguments?: Record<string, unknown> }
 interface ImageBlock { type: "image"; data: string; mimeType: string }
 type ContentBlock = TextBlock | ThinkingBlock | ToolCallBlock | ImageBlock;
 
@@ -37,6 +37,7 @@ function parseContentBlocks(message: unknown): ContentBlock[] {
           type: "toolCall",
           id: String(b.id || b.name),
           name: String(b.name),
+          arguments: b.arguments && typeof b.arguments === "object" ? b.arguments as Record<string, unknown> : undefined,
         });
       } else if (b.type === "image" && typeof b.data === "string" && b.data) {
         blocks.push({
@@ -231,7 +232,7 @@ export async function POST(request: NextRequest) {
               currentStepText = "";
             }
 
-            send({ type: "tool", name: tc.name });
+            send({ type: "tool", name: tc.name, args: tc.arguments });
           }
 
           // Stream the last text block (current step)
