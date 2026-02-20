@@ -10,9 +10,10 @@ const UPLOAD_DIR = join(process.cwd(), "public", "uploads");
 // ── Content block parsing ──
 
 interface TextBlock { type: "text"; text: string }
+interface ThinkingBlock { type: "thinking"; thinking: string }
 interface ToolCallBlock { type: "toolCall"; id: string; name: string }
 interface ImageBlock { type: "image"; data: string; mimeType: string }
-type ContentBlock = TextBlock | ToolCallBlock | ImageBlock;
+type ContentBlock = TextBlock | ThinkingBlock | ToolCallBlock | ImageBlock;
 
 function parseContentBlocks(message: unknown): ContentBlock[] {
   if (!message || typeof message !== "object") return [];
@@ -29,6 +30,8 @@ function parseContentBlocks(message: unknown): ContentBlock[] {
       const b = raw as Record<string, unknown>;
       if (b.type === "text" && typeof b.text === "string" && b.text) {
         blocks.push({ type: "text", text: b.text });
+      } else if (b.type === "thinking" && typeof b.thinking === "string" && b.thinking) {
+        blocks.push({ type: "thinking", thinking: b.thinking });
       } else if (b.type === "toolCall" && b.name) {
         blocks.push({
           type: "toolCall",
@@ -152,6 +155,7 @@ export async function POST(request: NextRequest) {
       let emittedStepCount = 0; // how many text blocks have been finalized as "step"
       let currentStepText = ""; // text of the step currently streaming
       let latestFullText = "";  // all text concatenated (fallback for done)
+      let latestThinking = "";  // accumulated thinking text
 
       // Save response image to disk, return URL
       const saveImage = async (img: ImageBlock): Promise<string | null> => {
@@ -192,7 +196,15 @@ export async function POST(request: NextRequest) {
           gotDelta = true;
           const blocks = parseContentBlocks(p.message);
           const textBlocks = blocks.filter((b): b is TextBlock => b.type === "text");
+          const thinkingBlocks = blocks.filter((b): b is ThinkingBlock => b.type === "thinking");
           const toolBlocks = blocks.filter((b): b is ToolCallBlock => b.type === "toolCall");
+
+          // Forward thinking blocks
+          const newThinking = thinkingBlocks.map((b) => b.thinking).join("");
+          if (newThinking && newThinking !== latestThinking) {
+            latestThinking = newThinking;
+            send({ type: "thinking_delta", text: newThinking });
+          }
 
           // Detect new tool calls → emit step boundary
           for (const tc of toolBlocks) {

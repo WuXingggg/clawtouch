@@ -11,6 +11,7 @@ export interface Message {
   msgType?: "text" | "tool";
   toolName?: string;
   images?: string[];
+  thinking?: string;
   status?: "sending" | "sent" | "error" | "queued";
 }
 
@@ -247,7 +248,13 @@ export function useChat() {
             continue;
           }
 
-          if (event.type === "delta") {
+          if (event.type === "thinking_delta") {
+            const pid = curPlaceholder!;
+            const thinkText = (event.text as string) || "";
+            setMessages((prev) =>
+              prev.map((m) => (m.id === pid ? { ...m, thinking: thinkText } : m))
+            );
+          } else if (event.type === "delta") {
             updatePlaceholder((event.text as string) || "");
           } else if (event.type === "step") {
             finalizeAndCreateNew((event.text as string) || "");

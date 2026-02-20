@@ -144,6 +144,9 @@ const en = {
   "chat.connectionFailed": "Connection failed: {msg}",
   "chat.queueing": "Queuing...",
 
+  // -- Thinking --
+  "thinking.label": "Thinking",
+
   // -- Empty --
   "empty.default": "No data",
 } as const;

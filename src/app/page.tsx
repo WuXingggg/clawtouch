@@ -25,6 +25,8 @@ import {
   Copy,
   Trash,
   RotateCcw,
+  ChevronDown,
+  Brain,
 } from "lucide-react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
@@ -40,6 +42,31 @@ import { I18nProvider, useT } from "@/lib/i18n";
 import type { Message } from "@/hooks/useChat";
 
 type PanelType = "tokens" | "skills" | "cron" | "settings" | null;
+
+function ThinkingBlock({ thinking, msgId }: { thinking: string; msgId: string }) {
+  const { t } = useT();
+  const [expanded, setExpanded] = useState(false);
+  return (
+    <div className="mb-1.5">
+      <button
+        onClick={() => setExpanded(!expanded)}
+        className="flex items-center gap-1 text-xs text-text-secondary/70 hover:text-text-secondary transition-colors py-0.5"
+      >
+        <Brain size={12} className="text-purple-400" />
+        <span>{t("thinking.label")}</span>
+        <ChevronDown
+          size={12}
+          className={`transition-transform ${expanded ? "rotate-180" : ""}`}
+        />
+      </button>
+      {expanded && (
+        <div className="mt-1 pl-4 border-l-2 border-purple-300/30 text-xs text-text-secondary/80 whitespace-pre-wrap leading-relaxed max-h-[300px] overflow-y-auto">
+          {thinking}
+        </div>
+      )}
+    </div>
+  );
+}
 
 const TOOL_KEYS: Record<string, string> = {
   web_search: "tool.web_search",
@@ -444,6 +471,9 @@ function HomeContent() {
                         />
                       ))}
                     </div>
+                  )}
+                  {msg.role === "assistant" && msg.thinking && (
+                    <ThinkingBlock thinking={msg.thinking} msgId={msg.id || String(i)} />
                   )}
                   {msg.content ? (
                     msg.role === "assistant" ? (

@@ -144,6 +144,9 @@ const zhCN = {
   "chat.connectionFailed": "连接失败: {msg}",
   "chat.queueing": "排队中...",
 
+  // -- Thinking --
+  "thinking.label": "思考过程",
+
   // -- Empty --
   "empty.default": "暂无数据",
 } as const;
